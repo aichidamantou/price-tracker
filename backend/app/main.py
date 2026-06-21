@@ -417,7 +417,6 @@ async def paste_preview(data: dict = {}):
         md = load_match_data(s)
         for item in items:
             r = match_item(None, item["name"], md)
-            # Get last price for deviation check
             last_price = None
             if r["product_id"]:
                 from .database import PriceHistory
@@ -442,41 +441,51 @@ async def paste_preview(data: dict = {}):
 
 @app.post("/api/paste/deepseek-compare")
 async def paste_deepseek_compare(data: dict = {}):
-    """DeepSeek AI 比对。"""
+    """DeepSeek AI 比对 — 用首选别名做参考。"""
     import requests, json, re
-    items = data.get("items", [])
-    if not items:
+    raw = data.get("items", [])
+    # Handle both array of strings and array of objects
+    if isinstance(raw, list) and len(raw) > 0:
+        if isinstance(raw[0], dict):
+            names = [i.get("input", "") for i in raw if i.get("input")]
+        else:
+            names = [str(i) for i in raw]
+    else:
         return JSONResponse(status_code=400, content={"error": "No items"})
 
     from .database import db_session, Product, ProductAlias
     with db_session() as s:
-        aliases = s.query(ProductAlias).order_by(ProductAlias.product_id, ProductAlias.sort_order).all()
-        ref_lines = []
-        seen = set()
-        for a in aliases:
-            if a.product_id not in seen:
-                ref_lines.append(f"{a.alias} -> {a.product_id}")
-                seen.add(a.product_id)
+        alias_map = {}  # preferred alias -> product name
+        for prod in s.query(Product).order_by(Product.id).all():
+            pa = s.query(ProductAlias).filter(
+                ProductAlias.product_id == prod.id
+            ).order_by(ProductAlias.sort_order).first()
+            if pa:
+                alias_map[pa.alias] = prod.name
 
-    prompt = f"""现有商品别名对照表（alias -> product_id）。匹配以下商品名称，返回JSON数组：
-[{{"input":"原始名称","matched_name":"标准名称","matched_id":数字,"price":数字或null,"score":0-100}}]
+    # Build reference: just preferred alias -> product name (no IDs, AI doesn't know them)
+    ref_lines = [f"{a} -> {n}" for a, n in alias_map.items()]
+    ref_str = "\n".join(ref_lines[:120])  # cap at 120
 
-规则：
-- 优先精确匹配 alias
-- 谐音/形近自动纠错
-- score>=90自动通过，70-89需确认，<70不匹配
+    prompt = f"你是OCR商品名匹配专家。匹配以下名称到标准商品名。\n规则：1)优先精确匹配alias 2)谐音形近自动纠错 3)score≥90高,70-89中,<70低\n\n首选别名对照表（alias -> 标准名）：\n{ref_str}\n\n返回JSON数组：[{{\"input\":\"原始名称\",\"matched_name\":\"标准名称\",\"score\":0-100}}]\n\n待匹配：\n" + "\n".join(names)
 
-标准商品列表：
-"""
-    # Get product names
+    # Also get last prices for deviation check (attached to response)
+    last_prices = {}
     with db_session() as s:
-        products = s.query(Product).all()
-        for p in products:
-            prompt += f"  id={p.id}: {p.name}\n"
-
-    prompt += "\n待匹配商品：\n"
-    for item in items:
-        prompt += f"\n{item.get('input','')}"
+        for n in names:
+            prod = s.query(Product).filter(Product.name == n).first()
+            if not prod:
+                # Try matching via alias
+                pa = s.query(ProductAlias).filter(ProductAlias.alias == n).first()
+                if pa:
+                    prod = s.query(Product).filter(Product.id == pa.product_id).first()
+            if prod:
+                from .database import PriceHistory
+                rec = s.query(PriceHistory).filter(
+                    PriceHistory.product_id == prod.id
+                ).order_by(PriceHistory.price_date.desc()).first()
+                if rec:
+                    last_prices[n] = rec.price
 
     try:
         resp = requests.post(
@@ -485,16 +494,29 @@ async def paste_deepseek_compare(data: dict = {}):
                      "Authorization": "Bearer sk-270635d346f745b4871eab1c5f773e62"},
             json={"model": "deepseek-chat",
                   "messages": [{"role": "user", "content": prompt}],
-                  "max_tokens": 4096, "temperature": 0.05},
+                  "max_tokens": 8192, "temperature": 0.05},
             timeout=60
         )
         content = resp.json()["choices"][0]["message"]["content"]
         match = re.search(r'\[.*\]', content, re.DOTALL)
         ds_results = json.loads(match.group()) if match else []
+        # 验证 matched_name 是否真的在库中
+        if ds_results:
+            with db_session() as s:
+                for r in ds_results:
+                    mn = r.get("matched_name", "")
+                    if mn:
+                        prod = s.query(Product).filter(Product.name == mn).first()
+                        if prod:
+                            r["matched_id"] = prod.id
+                        else:
+                            r["matched_id"] = None
+                            r["score"] = 0
+                            r.pop("matched_name", None)
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
 
-    return {"items": ds_results}
+    return {"items": ds_results, "last_prices": last_prices}
 
 
 @app.post("/api/paste/confirm")
