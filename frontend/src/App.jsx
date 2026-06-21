@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react'
 import { ConfigProvider, Layout, Typography, Button, Upload, message, Tooltip, Menu } from 'antd'
-import { UploadOutlined, DownloadOutlined, CloudServerOutlined, FileExcelOutlined, SnippetsOutlined, DashboardOutlined, AlignLeftOutlined } from '@ant-design/icons'
+import { UploadOutlined, DownloadOutlined, CloudServerOutlined, FileExcelOutlined, SnippetsOutlined, DashboardOutlined, AlignLeftOutlined, ThunderboltOutlined } from '@ant-design/icons'
 import zhCN from 'antd/locale/zh_CN'
 import SearchBar from './components/SearchBar'
 import DashboardGrid from './components/DashboardGrid'
@@ -9,6 +9,7 @@ import PriceReviewModal from './components/PriceReviewModal'
 import BackupRestoreModal from './components/BackupRestoreModal'
 import PasteReviewModal from './components/PasteReviewModal'
 import AliasManager from './components/AliasManager'
+import AIMatcher from './components/AIMatcher'
 import { usePriceStore } from './store/priceStore'
 
 const { Header, Content, Sider } = Layout
@@ -73,6 +74,7 @@ export default function App() {
     { key: 'dashboard', icon: <DashboardOutlined />, label: '价格看板' },
     { key: 'upload_excel', icon: <FileExcelOutlined />, label: 'Excel上传' },
     { key: 'paste', icon: <SnippetsOutlined />, label: '粘贴上传' },
+    { key: 'ai', icon: <ThunderboltOutlined />, label: 'AI 匹配' },
     { key: 'aliases', icon: <AlignLeftOutlined />, label: '别名管理' },
   ]
 
@@ -129,6 +131,7 @@ export default function App() {
           <Content style={{ padding: '8px 12px', minHeight: 'calc(100vh - 48px)' }}>
             {currentView === 'dashboard' && <DashboardGrid brands={brands} loading={loading} />}
             {currentView === 'aliases' && <AliasManager />}
+            {currentView === 'ai' && <AIMatcher />}
           </Content>
         </Layout>
       </Layout>
