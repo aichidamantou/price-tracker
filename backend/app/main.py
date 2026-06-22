@@ -349,8 +349,22 @@ def get_item(item_name: str):
                 PriceHistory.product_id == prod.id
             ).order_by(PriceHistory.price_date).all()
             prices = [{"date": r.price_date, "price": r.price} for r in records]
-            results.append({"name": prod.name, "brand": prod.brand or "", "prices": prices})
+            results.append({"product_id": prod.id, "name": prod.name, "brand": prod.brand or "", "prices": prices})
     return {"items": results}
+
+
+@app.post("/api/item/update-price")
+async def update_price(data: dict = {}):
+    """修改某商品某日期的价格。"""
+    from .database import db_session, PriceHistory, upsert_price
+    product_id = data.get("product_id")
+    price_date = data.get("date", "")
+    new_price = data.get("price")
+    if not product_id or not price_date:
+        return JSONResponse(status_code=400, content={"error": "Missing product_id or date"})
+    with db_session() as s:
+        upsert_price(s, product_id, new_price, price_date, "manual_correction")
+    return {"status": "ok", "updated": {"product_id": product_id, "date": price_date, "price": new_price}}
 
 
 # ── Template download ────────────────────────────────────────
@@ -522,10 +536,11 @@ async def paste_deepseek_compare(data: dict = {}):
 
 @app.post("/api/paste/confirm")
 async def paste_confirm(data: dict = {}):
-    """确认保存粘贴结果（含日期）。"""
-    from .database import db_session, upsert_price
+    """确认保存粘贴结果（含日期）— 新品自动创建。"""
+    from .database import db_session, upsert_price, Product, ProductAlias
     items = data.get("items", [])
     price_date = data.get("price_date", "")
+    brand = data.get("brand", "")
     if not price_date:
         price_date = now_bj().strftime("%Y-%m-%d")
     if not items:
@@ -535,6 +550,22 @@ async def paste_confirm(data: dict = {}):
         for item in items:
             pid = item.get("matched_id")
             price = item.get("price")
+            name = item.get("matched_name", "").strip()
+            brand = item.get("brand", "")
+
+            # 新品：有名称无 ID → 自动创建
+            if not pid and name:
+                existing = s.query(Product).filter(Product.name == name).first()
+                if not existing:
+                    prod = Product(name=name, brand=brand)
+                    s.add(prod)
+                    s.flush()
+                    pid = prod.id
+                    # 自动创建别名
+                    s.add(ProductAlias(product_id=pid, alias=name, sort_order=0, source="manual"))
+                else:
+                    pid = existing.id
+
             if pid and price is not None:
                 upsert_price(s, pid, price, price_date, "text_paste")
                 saved += 1

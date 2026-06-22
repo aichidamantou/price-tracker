@@ -1,5 +1,6 @@
 import React, { useState, useCallback } from 'react'
-import { Modal, Button, Input, message } from 'antd'
+import { Modal, Button, Input, message, DatePicker } from 'antd'
+import dayjs from 'dayjs'
 import ReviewPanel from './ReviewPanel'
 
 const { TextArea } = Input
@@ -9,6 +10,7 @@ export default function PasteReviewModal({ open, onClose }) {
   const [text, setText] = useState('')
   const [results, setResults] = useState([])
   const [loading, setLoading] = useState(false)
+  const [priceDate, setPriceDate] = useState(dayjs())
 
   const handleParse = useCallback(async () => {
     if (!text.trim()) { message.warning('请粘贴文本'); return }
@@ -30,6 +32,7 @@ export default function PasteReviewModal({ open, onClose }) {
       width={780} footer={null} destroyOnClose>
       {results.length === 0 ? (
         <div>
+          <div style={{ marginBottom: 8 }}><DatePicker value={priceDate} onChange={d => setPriceDate(d)} format="YYYY-MM-DD" /></div>
           <TextArea rows={8} value={text} onChange={e => setText(e.target.value)} placeholder="粘贴商品文本到这里…" />
           <Button type="primary" onClick={handleParse} loading={loading} style={{ marginTop: 8 }}>解析</Button>
         </div>
@@ -38,6 +41,7 @@ export default function PasteReviewModal({ open, onClose }) {
           items={results}
           onRefresh={handleParse}
           onCancel={() => { setResults([]); setText('') }}
+          initialDate={priceDate}
         />
       )}
     </Modal>

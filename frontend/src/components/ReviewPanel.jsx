@@ -18,9 +18,9 @@ const API_BASE = ''
  *   onCancel – 取消回调
  *   title – 弹窗标题前缀
  */
-export default function ReviewPanel({ items, onRefresh, onCancel, title }) {
+export default function ReviewPanel({ items, onRefresh, onCancel, title, initialDate }) {
   const [results, setResults] = useState(items)
-  const [priceDate, setPriceDate] = useState(dayjs())
+  const [priceDate, setPriceDate] = useState(initialDate || dayjs())
   const [confirming, setConfirming] = useState(false)
   const [customNames, setCustomNames] = useState({})
   const [brandSearch, setBrandSearch] = useState({})
@@ -91,7 +91,13 @@ export default function ReviewPanel({ items, onRefresh, onCancel, title }) {
   const handleSave = async () => {
     setConfirming(true)
     try {
-      const toSave = results.filter(i => i.matched_id && i.price != null).map(i => ({ matched_id: i.matched_id, price: i.price }))
+      // 新品也发送：matched_name + brand 用于自动创建
+      const toSave = results.filter(i => i.price != null).map(i => ({
+        matched_id: i.matched_id,
+        matched_name: i.matched_name || '',
+        brand: i.brand || '',
+        price: i.price,
+      }))
       const r = await fetch(`${API_BASE}/api/paste/confirm`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ items: toSave, price_date: priceDate.format('YYYY-MM-DD') }),
