@@ -465,7 +465,7 @@ async def paste_deepseek_compare(data: dict = {}):
 
     # Build reference: just preferred alias -> product name (no IDs, AI doesn't know them)
     ref_lines = [f"{a} -> {n}" for a, n in alias_map.items()]
-    ref_str = "\n".join(ref_lines[:120])  # cap at 120
+    ref_str = "\n".join(ref_lines)  # 全部发，不截断
 
     prompt = f"你是OCR商品名匹配专家。匹配以下名称到标准商品名。\n规则：1)优先精确匹配alias 2)谐音形近自动纠错 3)score≥90高,70-89中,<70低\n\n首选别名对照表（alias -> 标准名）：\n{ref_str}\n\n返回JSON数组：[{{\"input\":\"原始名称\",\"matched_name\":\"标准名称\",\"score\":0-100}}]\n\n待匹配：\n" + "\n".join(names)
 
@@ -494,13 +494,13 @@ async def paste_deepseek_compare(data: dict = {}):
                      "Authorization": "Bearer sk-270635d346f745b4871eab1c5f773e62"},
             json={"model": "deepseek-chat",
                   "messages": [{"role": "user", "content": prompt}],
-                  "max_tokens": 8192, "temperature": 0.05},
+                  "max_tokens": 16384, "temperature": 0.05},
             timeout=60
         )
         content = resp.json()["choices"][0]["message"]["content"]
         match = re.search(r'\[.*\]', content, re.DOTALL)
         ds_results = json.loads(match.group()) if match else []
-        # 验证 matched_name 是否真的在库中
+        # 验证 matched_name 是否真的在库中 + 附加品牌
         if ds_results:
             with db_session() as s:
                 for r in ds_results:
@@ -509,6 +509,7 @@ async def paste_deepseek_compare(data: dict = {}):
                         prod = s.query(Product).filter(Product.name == mn).first()
                         if prod:
                             r["matched_id"] = prod.id
+                            r["brand"] = prod.brand or ""  # 附上品牌
                         else:
                             r["matched_id"] = None
                             r["score"] = 0

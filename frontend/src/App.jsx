@@ -23,6 +23,7 @@ export default function App() {
   const [reviewData, setReviewData] = useState(null)
   const [backupOpen, setBackupOpen] = useState(false)
   const [pasteOpen, setPasteOpen] = useState(false)
+  const [aiOpen, setAiOpen] = useState(false)
   const [currentView, setCurrentView] = useState('dashboard')
 
   useEffect(() => { fetchDashboard() }, [])
@@ -97,6 +98,7 @@ export default function App() {
             onClick={({ key }) => {
               if (key === 'upload_excel') { fileInputRef.current?.click(); return }
               if (key === 'paste') { setPasteOpen(true); return }
+              if (key === 'ai') { setAiOpen(true); return }
               setCurrentView(key)
             }}
             items={menuItems}
@@ -131,7 +133,7 @@ export default function App() {
           <Content style={{ padding: '8px 12px', minHeight: 'calc(100vh - 48px)' }}>
             {currentView === 'dashboard' && <DashboardGrid brands={brands} loading={loading} />}
             {currentView === 'aliases' && <AliasManager />}
-            {currentView === 'ai' && <AIMatcher />}
+            <AIMatcher open={aiOpen} onClose={() => setAiOpen(false)} />
           </Content>
         </Layout>
       </Layout>
