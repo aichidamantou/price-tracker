@@ -633,7 +633,9 @@ async def add_alias(data: dict = {}):
         a = ProductAlias(product_id=product_id, alias=alias_text,
                         sort_order=max_order + 1, source="manual")
         s.add(a)
-    return {"status": "ok", "alias_id": a.id}
+        s.flush()
+        alias_id = a.id
+    return {"status": "ok", "alias_id": alias_id}
 
 
 @app.post("/api/aliases/delete")
@@ -736,6 +738,21 @@ async def edit_product_brand(data: dict = {}):
             prod.brand = new_brand
     return {"status": "ok"}
 
+
+
+
+@app.delete("/api/products/{product_id}")
+async def delete_product(product_id: int):
+    """删除商品及其别名和价格记录。"""
+    from .database import db_session, Product, ProductAlias, PriceHistory
+    with db_session() as s:
+        prod = s.query(Product).filter(Product.id == product_id).first()
+        if not prod:
+            return JSONResponse(status_code=404, content={"error": "Product not found"})
+        s.query(PriceHistory).filter(PriceHistory.product_id == product_id).delete()
+        s.query(ProductAlias).filter(ProductAlias.product_id == product_id).delete()
+        s.delete(prod)
+    return {"status": "ok"}
 
 # ── Frontend static files ────────────────────────────────────
 
