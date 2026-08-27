@@ -54,6 +54,7 @@ class Product(Base):
     name = Column(String(255), nullable=False, unique=True)
     brand = Column(String(100))
     keywords = Column(String(500))  # JSON array as string
+    sort_order = Column(Integer, default=0)  # within-brand ordering
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -68,6 +69,18 @@ class ProductAlias(Base):
     sort_order = Column(Integer, default=0)  # 同一 product 下的排序
     created_at = Column(DateTime, default=datetime.utcnow)
 
+
+
+
+
+class BrandOrder(Base):
+    """品牌(地区)排序表"""
+    __tablename__ = "brand_order"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    brand = Column(String(100), nullable=False, unique=True)
+    sort_order = Column(Integer, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow)
 
 class PriceHistory(Base):
     """价格历史表"""
@@ -89,7 +102,28 @@ class PriceHistory(Base):
 
 
 def init_db():
-    """创建所有表（幂等）。"""
+    """创建所有表（幂等）。先迁移再建表。"""
+    # Pre-create columns that might be missing (before ORM tries to query them)
+    import sqlite3
+    if os.path.exists(DB_PATH):
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute("PRAGMA table_info(products)")
+        cols = [r[1] for r in c.fetchall()]
+        if 'sort_order' not in cols:
+            c.execute("ALTER TABLE products ADD COLUMN sort_order INTEGER DEFAULT 0")
+            c.execute("UPDATE products SET sort_order = id")
+            conn.commit()
+            print('[init_db] Added products.sort_order')
+        # Create brand_order table
+        c.execute("""CREATE TABLE IF NOT EXISTS brand_order (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            brand TEXT NOT NULL UNIQUE,
+            sort_order INTEGER DEFAULT 0,
+            created_at TEXT DEFAULT (datetime('now','localtime'))
+        )""")
+        conn.commit()
+        conn.close()
     Base.metadata.create_all(engine)
 
 
@@ -150,4 +184,21 @@ def migrate_schema():
         c.execute("UPDATE product_aliases SET sort_order = id")
         conn.commit()
         print("[migrate_schema] Added sort_order column")
+
+    # Add products.sort_order
+    c.execute("PRAGMA table_info(products)")
+    cols = [r[1] for r in c.fetchall()]
+    if 'sort_order' not in cols:
+        c.execute("ALTER TABLE products ADD COLUMN sort_order INTEGER DEFAULT 0")
+        c.execute("UPDATE products SET sort_order = id")
+        conn.commit()
+        print('[migrate_schema] Added products.sort_order')
+    # Create brand_order table
+    c.execute("""CREATE TABLE IF NOT EXISTS brand_order (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        brand TEXT NOT NULL UNIQUE,
+        sort_order INTEGER DEFAULT 0,
+        created_at TEXT DEFAULT (datetime('now','localtime'))
+    )""")
+    conn.commit()
     conn.close()
