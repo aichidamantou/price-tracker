@@ -18,7 +18,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .storage import load_all, save_all
 from .parser import parse_upload, confirm_upload as json_confirm_upload
-from .database import db_session, Product, PriceHistory, upsert_price, get_product_id, get_product_name
+from .database import db_session, Product, PriceHistory, ProductAlias, BrandOrder, upsert_price, get_product_id, get_product_name
 from .migration import migrate_if_needed
 from sqlalchemy import text as sa_text, func
 
@@ -53,11 +53,18 @@ async def startup():
 # ── SQLite helpers ───────────────────────────────────────────
 
 def _db_to_brand_groups():
-    """Read from SQLite and return the same brand→items structure for backward compat."""
+    """Read from SQLite and return the same brand→items structure for backward compat.
+    Respects brand_order.sort_order and products.sort_order for ordering.
+    """
     from collections import defaultdict
     brands_map = defaultdict(list)
+    brand_order_map = {}
     with db_session() as session:
-        products = session.query(Product).order_by(Product.id).all()
+        # Load brand sort orders
+        for bo in session.query(BrandOrder).all():
+            brand_order_map[bo.brand] = bo.sort_order
+        # Load products sorted by sort_order within brand
+        products = session.query(Product).order_by(Product.sort_order, Product.id).all()
         for prod in products:
             records = session.query(PriceHistory).filter(
                 PriceHistory.product_id == prod.id
@@ -67,8 +74,12 @@ def _db_to_brand_groups():
                 "name": prod.name,
                 "prices": prices,
             })
+    # Sort brands: by brand_order.sort_order if set, else alphabetical
+    def brand_sort_key(name):
+        order = brand_order_map.get(name)
+        return (0, order) if order is not None else (1, name)
     brands = []
-    for brand_name in sorted(brands_map.keys()):
+    for brand_name in sorted(brands_map.keys(), key=brand_sort_key):
         brands.append({"brand": brand_name, "items": brands_map[brand_name]})
     return brands
 
@@ -753,6 +764,51 @@ async def delete_product(product_id: int):
         s.query(ProductAlias).filter(ProductAlias.product_id == product_id).delete()
         s.delete(prod)
     return {"status": "ok"}
+
+
+
+@app.post("/api/aliases/reorder-brands")
+async def reorder_brands(data: dict = {}):
+    """保存地区(品牌)排序。brands: ["湖南", "云南", ...]"""
+    brand_names = data.get("brands", [])
+    if not brand_names:
+        return JSONResponse(status_code=400, content={"error": "Missing brands list"})
+    with db_session() as s:
+        for i, name in enumerate(brand_names):
+            bo = s.query(BrandOrder).filter(BrandOrder.brand == name).first()
+            if bo:
+                bo.sort_order = i
+            else:
+                s.add(BrandOrder(brand=name, sort_order=i))
+        # Remove brands not in the list
+        all_existing = s.query(BrandOrder).all()
+        for bo in all_existing:
+            if bo.brand not in brand_names:
+                s.delete(bo)
+    return {"status": "ok", "sorted": len(brand_names)}
+
+
+@app.post("/api/aliases/reorder-products")
+async def reorder_products(data: dict = {}):
+    """保存某地区内商品排序。brand: "湖南", product_ids: [5, 12, 3, ...]"""
+    brand = data.get("brand", "")
+    product_ids = data.get("product_ids", [])
+    if not brand or not product_ids:
+        return JSONResponse(status_code=400, content={"error": "Missing brand or product_ids"})
+    with db_session() as s:
+        for i, pid in enumerate(product_ids):
+            prod = s.query(Product).filter(Product.id == pid, Product.brand == brand).first()
+            if prod:
+                prod.sort_order = i
+    return {"status": "ok", "sorted": len(product_ids)}
+
+
+@app.get("/api/aliases/brand-order")
+def get_brand_order():
+    """获取地区排序。"""
+    with db_session() as s:
+        orders = s.query(BrandOrder).order_by(BrandOrder.sort_order).all()
+        return {"brands": [o.brand for o in orders]}
 
 # ── Frontend static files ────────────────────────────────────
 
