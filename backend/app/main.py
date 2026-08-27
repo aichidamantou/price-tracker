@@ -591,7 +591,11 @@ def list_aliases_manage():
     from .database import db_session, Product, ProductAlias
     result = []
     with db_session() as s:
-        products = s.query(Product).order_by(Product.brand, Product.name).all()
+        # Sort: brands by brand_order, then products by sort_order within brand
+        brand_order_map = {}
+        for bo in s.query(BrandOrder).all():
+            brand_order_map[bo.brand] = bo.sort_order
+        products = s.query(Product).order_by(Product.sort_order, Product.id).all()
         for prod in products:
             aliases = s.query(ProductAlias).filter(
                 ProductAlias.product_id == prod.id
@@ -604,6 +608,11 @@ def list_aliases_manage():
                 "brand": prod.brand or "",
                 "aliases": alias_list,
             })
+    # Sort result by brand_order
+    def _brand_key(item):
+        bo = brand_order_map.get(item.get("brand", ""))
+        return (0, bo) if bo is not None else (1, item.get("brand", ""))
+    result.sort(key=_brand_key)
     return {"products": result}
 
 
