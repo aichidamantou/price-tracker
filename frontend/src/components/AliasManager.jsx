@@ -1,19 +1,21 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { Typography, Spin, Input, Button, Tag, message, Tooltip, Card, Popconfirm, Empty } from 'antd'
-import { EditOutlined, CheckOutlined, CloseOutlined, SaveOutlined, DragOutlined, DeleteOutlined, PlusOutlined } from '@ant-design/icons'
+import { EditOutlined, CheckOutlined, CloseOutlined, DeleteOutlined, PlusOutlined, HolderOutlined } from '@ant-design/icons'
 
 const { Text, Title } = Typography
 const API_BASE = ''
+const MAX_ALIASES_SHOW = 3
 
 export default function AliasManager() {
   const [products, setProducts] = useState([])
   const [loading, setLoading] = useState(true)
-  const [editingProduct, setEditingProduct] = useState(null)  // product_id
-  const [editingAlias, setEditingAlias] = useState(null)      // alias id
+  const [editingProduct, setEditingProduct] = useState(null)
+  const [editingAlias, setEditingAlias] = useState(null)
   const [editValue, setEditValue] = useState('')
-  const [draggedItem, setDraggedItem] = useState(null)
-  // 每个商品的添加别名输入值 {productId: string}
   const [newAliasValues, setNewAliasValues] = useState({})
+  // Drag state
+  const [dragBrandIdx, setDragBrandIdx] = useState(null)
+  const [dragProdInfo, setDragProdInfo] = useState(null)  // {brand, idx}
 
   const fetchAliases = useCallback(async () => {
     setLoading(true)
@@ -27,13 +29,26 @@ export default function AliasManager() {
 
   useEffect(() => { fetchAliases() }, [])
 
-  // ── 编辑标准名称 ──
-  const startEditProduct = (prod) => {
-    setEditingProduct(prod.product_id)
-    setEditValue(prod.name)
-    setEditingAlias(null)
-  }
+  // ── 按 brand 分组（保持API返回顺序） ──
+  const buildBrandGroups = useCallback(() => {
+    const groups = []
+    let lastBrand = null
+    for (const prod of products) {
+      const brand = prod.brand || '未分类'
+      if (brand !== lastBrand) {
+        groups.push({ brand, products: [prod] })
+        lastBrand = brand
+      } else {
+        groups[groups.length - 1].products.push(prod)
+      }
+    }
+    return groups
+  }, [products])
 
+  const brandGroups = buildBrandGroups()
+
+  // ── 编辑标准名称 ──
+  const startEditProduct = (prod) => { setEditingProduct(prod.product_id); setEditValue(prod.name); setEditingAlias(null) }
   const saveProductName = async (productId) => {
     if (!editValue.trim()) return
     try {
@@ -42,21 +57,13 @@ export default function AliasManager() {
         body: JSON.stringify({ product_id: productId, name: editValue.trim() }),
       })
       const data = await res.json()
-      if (data.status === 'ok') {
-        message.success('已更新')
-        setEditingProduct(null)
-        fetchAliases()
-      } else message.error(data.error || '更新失败')
+      if (data.status === 'ok') { message.success('已更新'); setEditingProduct(null); fetchAliases() }
+      else message.error(data.error || '更新失败')
     } catch (e) { message.error('更新失败') }
   }
 
   // ── 编辑别名 ──
-  const startEditAlias = (productId, alias) => {
-    setEditingAlias(alias.id)
-    setEditValue(alias.alias)
-    setEditingProduct(null)
-  }
-
+  const startEditAlias = (alias) => { setEditingAlias(alias.id); setEditValue(alias.alias); setEditingProduct(null) }
   const saveAlias = async (aliasId) => {
     if (!editValue.trim()) return
     try {
@@ -65,11 +72,8 @@ export default function AliasManager() {
         body: JSON.stringify({ alias_id: aliasId, alias: editValue.trim() }),
       })
       const data = await res.json()
-      if (data.status === 'ok') {
-        message.success('已更新')
-        setEditingAlias(null)
-        fetchAliases()
-      } else message.error(data.error || '更新失败')
+      if (data.status === 'ok') { message.success('已更新'); setEditingAlias(null); fetchAliases() }
+      else message.error(data.error || '更新失败')
     } catch (e) { message.error('更新失败') }
   }
 
@@ -83,11 +87,8 @@ export default function AliasManager() {
         body: JSON.stringify({ product_id: productId, alias: aliasText }),
       })
       const data = await res.json()
-      if (data.status === 'ok') {
-        message.success('别名已添加')
-        setNewAliasValues(prev => ({ ...prev, [productId]: '' }))
-        fetchAliases()
-      } else message.error(data.error || '添加失败')
+      if (data.status === 'ok') { message.success('别名已添加'); setNewAliasValues(prev => ({ ...prev, [productId]: '' })); fetchAliases() }
+      else message.error(data.error || '添加失败')
     } catch (e) { message.error('添加失败') }
   }
 
@@ -98,39 +99,39 @@ export default function AliasManager() {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ alias_id: aliasId }),
       })
-      message.success('别名已删除')
-      fetchAliases()
+      message.success('别名已删除'); fetchAliases()
     } catch (e) { message.error('删除失败') }
   }
 
   // ── 删除商品 ──
   const deleteProduct = async (productId) => {
     try {
-      const res = await fetch(`${API_BASE}/api/products/${productId}`, {
-        method: 'DELETE',
-      })
+      const res = await fetch(`${API_BASE}/api/products/${productId}`, { method: 'DELETE' })
       const data = await res.json()
-      if (data.status === 'ok') {
-        message.success('商品已删除')
-        fetchAliases()
-      } else message.error(data.error || '删除失败')
+      if (data.status === 'ok') { message.success('商品已删除'); fetchAliases() }
+      else message.error(data.error || '删除失败')
     } catch (e) { message.error('删除失败') }
   }
 
-  // ── 拖拽排序 ──
-  const handleDragStart = (productId, aliasId) => setDraggedItem({ productId, aliasId })
-  const handleDragOver = (e) => e.preventDefault()
-  const handleDrop = async (productId, targetAliasId) => {
-    if (!draggedItem || draggedItem.productId !== productId) return
+  // ── 别名拖拽排序 ──
+  const handleAliasDragStart = (productId, aliasId) => {
+    // Store in dataTransfer for alias reordering within product
     const prod = products.find(p => p.product_id === productId)
-    if (!prod) return
-    const ids = prod.aliases.map(a => a.id)
-    const dragIdx = ids.indexOf(draggedItem.aliasId)
+    if (prod) {
+      const ids = prod.aliases.map(a => a.id)
+      window._aliasDrag = { productId, aliasId, ids }
+    }
+  }
+  const handleAliasDrop = async (productId, targetAliasId) => {
+    const drag = window._aliasDrag
+    if (!drag || drag.productId !== productId) return
+    const ids = [...drag.ids]
+    const dragIdx = ids.indexOf(drag.aliasId)
     const dropIdx = ids.indexOf(targetAliasId)
-    if (dragIdx === -1 || dropIdx === -1) return
+    if (dragIdx === -1 || dropIdx === -1 || dragIdx === dropIdx) { window._aliasDrag = null; return }
     ids.splice(dragIdx, 1)
-    ids.splice(dropIdx, 0, draggedItem.aliasId)
-    setDraggedItem(null)
+    ids.splice(dropIdx, 0, drag.aliasId)
+    window._aliasDrag = null
     try {
       await fetch(`${API_BASE}/api/aliases/reorder`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -140,183 +141,227 @@ export default function AliasManager() {
     } catch (e) { console.error(e) }
   }
 
-  // ── 按 brand 分组 ──
-  const brandGroups = {}
-  for (const prod of products) {
-    const brand = prod.brand || '未分类'
-    if (!brandGroups[brand]) brandGroups[brand] = []
-    brandGroups[brand].push(prod)
+  // ── 品牌拖拽排序 ──
+  const handleBrandDragStart = (idx) => setDragBrandIdx(idx)
+  const handleBrandDragOver = (e) => e.preventDefault()
+  const handleBrandDrop = async (targetIdx) => {
+    if (dragBrandIdx === null || dragBrandIdx === targetIdx) { setDragBrandIdx(null); return }
+    const newOrder = [...brandGroups]
+    const [moved] = newOrder.splice(dragBrandIdx, 1)
+    newOrder.splice(targetIdx, 0, moved)
+    setDragBrandIdx(null)
+    const brandNames = newOrder.map(g => g.brand)
+    try {
+      await fetch(`${API_BASE}/api/aliases/reorder-brands`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ brands: brandNames }),
+      })
+      // Also reorder products in the data locally and save each brand's product order
+      // Re-build products array in new brand order
+      const reorderedProducts = []
+      for (const g of newOrder) {
+        const prodsInBrand = products.filter(p => (p.brand || '未分类') === g.brand)
+        reorderedProducts.push(...prodsInBrand)
+      }
+      setProducts(reorderedProducts)
+      message.success('地区排序已保存')
+    } catch (e) { message.error('排序保存失败') }
   }
-  const sortedBrands = Object.keys(brandGroups).sort()
+
+  // ── 商品拖拽排序（同品牌内） ──
+  const handleProdDragStart = (brand, idx) => setDragProdInfo({ brand, idx })
+  const handleProdDragOver = (e) => e.preventDefault()
+  const handleProdDrop = async (brand, targetIdx) => {
+    if (!dragProdInfo || dragProdInfo.brand !== brand || dragProdInfo.idx === targetIdx) { setDragProdInfo(null); return }
+    const group = brandGroups.find(g => g.brand === brand)
+    if (!group) { setDragProdInfo(null); return }
+    const newProds = [...group.products]
+    const [moved] = newProds.splice(dragProdInfo.idx, 1)
+    newProds.splice(targetIdx, 0, moved)
+    setDragProdInfo(null)
+    const productIds = newProds.map(p => p.product_id)
+    try {
+      await fetch(`${API_BASE}/api/aliases/reorder-products`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ brand, product_ids: productIds }),
+      })
+      // Update local state
+      setProducts(prev => {
+        const other = prev.filter(p => (p.brand || '未分类') !== brand)
+        return [...prev.filter(p => (p.brand || '未分类') !== brand).slice(0, 0), ...other]
+          .filter(p => (p.brand || '未分类') !== brand)
+          .concat(...newProds)
+      })
+      // Simpler: just refetch
+      fetchAliases()
+      message.success('商品排序已保存')
+    } catch (e) { message.error('排序保存失败') }
+  }
 
   if (loading && products.length === 0) {
     return <Spin style={{ display: 'block', margin: '40px auto' }} />
   }
 
   return (
-    <div style={{ padding: '8px 16px' }}>
-      <div style={{ marginBottom: 12 }}>
-        <Text strong style={{ fontSize: 15 }}>别名管理</Text>
-        <div style={{ fontSize: 12, color: '#888', marginTop: 4 }}>
-          点击 ✏️ 编辑 • 拖动 ⠿ 排序 • 首行=首选别名 • 按【地区】分组
+    <div style={{ padding: '8px 12px' }}>
+      <div style={{ marginBottom: 10, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div>
+          <Text strong style={{ fontSize: 15 }}>别名管理</Text>
+          <div style={{ fontSize: 11, color: '#888', marginTop: 2 }}>
+            拖动 ⠿ 排序地区/商品/别名 • 点击 ✏️ 编辑 • 首行=首选别名 • 最多显示{MAX_ALIASES_SHOW}个别名
+          </div>
         </div>
       </div>
 
-      {sortedBrands.length === 0 && <Empty description="暂无商品" style={{ marginTop: 40 }} />}
+      {brandGroups.length === 0 && <Empty description="暂无商品" style={{ marginTop: 40 }} />}
 
-      {sortedBrands.map(brand => (
+      {brandGroups.map((group, brandIdx) => (
         <Card
-          key={brand}
+          key={group.brand}
           size="small"
-          style={{ marginBottom: 12, borderRadius: 8 }}
+          style={{
+            marginBottom: 10, borderRadius: 8,
+            border: dragBrandIdx === brandIdx ? '2px dashed #1677ff' : undefined,
+            opacity: dragBrandIdx === brandIdx ? 0.5 : 1,
+          }}
           title={
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <Title level={5} style={{ margin: 0, color: '#1677ff', fontSize: 14 }}>{brand}</Title>
-              <Tag style={{ fontSize: 10 }}>{brandGroups[brand].length}种商品</Tag>
+            <div
+              draggable
+              onDragStart={() => handleBrandDragStart(brandIdx)}
+              onDragOver={handleBrandDragOver}
+              onDrop={() => handleBrandDrop(brandIdx)}
+              style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'grab' }}
+            >
+              <HolderOutlined style={{ color: '#bbb', fontSize: 12 }} />
+              <Title level={5} style={{ margin: 0, color: '#1677ff', fontSize: 14 }}>{group.brand}</Title>
+              <Tag style={{ fontSize: 10 }}>{group.products.length}种</Tag>
             </div>
           }
         >
-          {brandGroups[brand].map(prod => (
-            <div key={prod.product_id} style={{
-              marginBottom: 8, background: '#fafafa', borderRadius: 6, padding: 10,
-              border: '1px solid #f0f0f0',
-            }}>
-              {/* 标准名称行 */}
-              <div style={{
-                display: 'flex', alignItems: 'center', gap: 8, marginBottom: prod.aliases.length > 0 ? 6 : 0,
-                padding: '4px 0', borderBottom: prod.aliases.length > 0 ? '1px solid #f5f5f5' : 'none',
-              }}>
-                {editingProduct === prod.product_id ? (
-                  <>
-                    <Input size="small" value={editValue}
-                      onChange={e => setEditValue(e.target.value)}
-                      style={{ width: 180 }}
-                      onPressEnter={() => saveProductName(prod.product_id)} />
-                    <Button size="small" type="primary" icon={<CheckOutlined />}
-                      onClick={() => saveProductName(prod.product_id)} />
-                    <Button size="small" icon={<CloseOutlined />}
-                      onClick={() => setEditingProduct(null)} />
-                  </>
-                ) : (
-                  <>
-                    <Text strong style={{ fontSize: 13, flex: 1 }}>{prod.name}</Text>
-                    <Tag style={{ fontSize: 10, margin: 0 }}>{prod.aliases.length}个别名</Tag>
-                    <Tooltip title="编辑标准名称">
-                      <Button type="text" size="small" icon={<EditOutlined />}
-                        onClick={() => startEditProduct(prod)} />
-                    </Tooltip>
-                    <Popconfirm
-                      title="确定删除此商品？"
-                      description="将同时删除所有别名和价格记录"
-                      onConfirm={() => deleteProduct(prod.product_id)}
-                      okText="确定删除"
-                      cancelText="取消"
-                      okButtonProps={{ danger: true }}
-                    >
-                      <Tooltip title="删除商品">
-                        <Button type="text" size="small" danger icon={<DeleteOutlined />} />
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))',
+            gap: 6,
+          }}>
+            {group.products.map((prod, prodIdx) => (
+              <div
+                key={prod.product_id}
+                draggable
+                onDragStart={() => handleProdDragStart(group.brand, prodIdx)}
+                onDragOver={handleProdDragOver}
+                onDrop={() => handleProdDrop(group.brand, prodIdx)}
+                style={{
+                  background: dragProdInfo?.brand === group.brand && dragProdInfo?.idx === prodIdx ? '#e6f7ff' : '#fafafa',
+                  border: '1px solid #f0f0f0',
+                  borderRadius: 6,
+                  padding: '6px 8px',
+                  cursor: 'grab',
+                  opacity: dragProdInfo?.brand === group.brand && dragProdInfo?.idx === prodIdx ? 0.5 : 1,
+                }}
+              >
+                {/* 标题行：序号 + 名称 + 操作 */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 4 }}>
+                  <Tag style={{ fontSize: 10, margin: 0, lineHeight: '16px', minWidth: 24, textAlign: 'center' }}>
+                    {prodIdx + 1}
+                  </Tag>
+                  {editingProduct === prod.product_id ? (
+                    <>
+                      <Input size="small" value={editValue}
+                        onChange={e => setEditValue(e.target.value)}
+                        style={{ flex: 1, fontSize: 11 }}
+                        onPressEnter={() => saveProductName(prod.product_id)} />
+                      <Button size="small" type="primary" icon={<CheckOutlined />}
+                        style={{ fontSize: 10, minWidth: 20 }} onClick={() => saveProductName(prod.product_id)} />
+                      <Button size="small" icon={<CloseOutlined />}
+                        style={{ fontSize: 10, minWidth: 20 }} onClick={() => setEditingProduct(null)} />
+                    </>
+                  ) : (
+                    <>
+                      <Text strong style={{ fontSize: 12, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {prod.name}
+                      </Text>
+                      <Tooltip title="编辑">
+                        <Button type="text" size="small" icon={<EditOutlined />}
+                          style={{ fontSize: 10, minWidth: 18 }} onClick={() => startEditProduct(prod)} />
                       </Tooltip>
-                    </Popconfirm>
-                  </>
-                )}
-              </div>
+                      <Popconfirm title="确定删除？" onConfirm={() => deleteProduct(prod.product_id)} okText="删除" cancelText="取消" okButtonProps={{ danger: true }}>
+                        <Tooltip title="删除商品">
+                          <Button type="text" size="small" danger icon={<DeleteOutlined />}
+                            style={{ fontSize: 10, minWidth: 18 }} />
+                        </Tooltip>
+                      </Popconfirm>
+                    </>
+                  )}
+                </div>
 
-              {/* 别名列表 */}
-              {prod.aliases.length > 0 && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                  {prod.aliases.map((a, idx) => (
+                {/* 别名列表（最多显示MAX_ALIASES_SHOW个） */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                  {prod.aliases.slice(0, MAX_ALIASES_SHOW).map((a, idx) => (
                     <div key={a.id} style={{
-                      display: 'flex', alignItems: 'center', gap: 6,
-                      padding: '3px 6px', borderRadius: 4,
+                      display: 'flex', alignItems: 'center', gap: 3,
+                      padding: '1px 4px', borderRadius: 3,
                       background: idx === 0 ? '#f0f9ff' : '#fff',
-                      border: '1px solid',
-                      borderColor: idx === 0 ? '#bae0ff' : '#f0f0f0',
+                      border: `1px solid ${idx === 0 ? '#bae0ff' : '#f5f5f5'}`,
                     }}>
-                      {/* 拖拽手柄 */}
                       <span draggable
-                        onDragStart={() => handleDragStart(prod.product_id, a.id)}
-                        onDragOver={handleDragOver}
-                        onDrop={() => handleDrop(prod.product_id, a.id)}
-                        style={{ cursor: 'grab', color: '#bbb', fontSize: 14, width: 16 }}>
+                        onDragStart={(e) => { e.stopPropagation(); handleAliasDragStart(prod.product_id, a.id) }}
+                        onDragOver={(e) => e.preventDefault()}
+                        onDrop={(e) => { e.stopPropagation(); handleAliasDrop(prod.product_id, a.id) }}
+                        style={{ cursor: 'grab', color: '#ccc', fontSize: 11, width: 12 }}>
                         ⠿
                       </span>
-
-                      {/* 别名文本 */}
                       {editingAlias === a.id ? (
                         <>
                           <Input size="small" value={editValue}
                             onChange={e => setEditValue(e.target.value)}
-                            style={{ flex: 1 }}
+                            style={{ flex: 1, fontSize: 10 }}
                             onPressEnter={() => saveAlias(a.id)} />
                           <Button size="small" type="primary" icon={<CheckOutlined />}
-                            onClick={() => saveAlias(a.id)} />
+                            style={{ fontSize: 9, minWidth: 16 }} onClick={() => saveAlias(a.id)} />
                           <Button size="small" icon={<CloseOutlined />}
-                            onClick={() => setEditingAlias(null)} />
+                            style={{ fontSize: 9, minWidth: 16 }} onClick={() => setEditingAlias(null)} />
                         </>
                       ) : (
                         <>
-                          <Tooltip title="编辑别名">
-                            <Text style={{
-                              flex: 1, fontSize: 12, cursor: 'pointer',
-                              textDecoration: 'none', padding: '2px 0',
-                            }}
-                              onClick={() => startEditAlias(prod.product_id, a)}>
-                              {a.alias}
-                            </Text>
-                          </Tooltip>
-
-                          {idx === 0 && (
-                            <Tag color="blue" style={{ fontSize: 9, margin: 0, lineHeight: '16px' }}>
-                              首选
-                            </Tag>
-                          )}
-                          <Tag style={{ fontSize: 9, margin: 0, lineHeight: '16px' }}>
-                            {a.source === 'manual' ? '手动' : a.source === 'user_correction' ? '学习' : '自动'}
-                          </Tag>
-                          <Tooltip title="编辑">
-                            <Button type="text" size="small" icon={<EditOutlined />}
-                              style={{ fontSize: 11, color: '#888' }}
-                              onClick={() => startEditAlias(prod.product_id, a)} />
-                          </Tooltip>
-                          <Tooltip title="删除别名">
-                            <Button type="text" size="small" danger icon={<CloseOutlined />}
-                              style={{ fontSize: 11 }}
-                              onClick={() => deleteAlias(a.id)} />
-                          </Tooltip>
+                          <Text style={{ flex: 1, fontSize: 10, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                            onClick={() => startEditAlias(a)}>
+                            {a.alias}
+                          </Text>
+                          {idx === 0 && <Tag color="blue" style={{ fontSize: 8, margin: 0, lineHeight: '14px', padding: '0 3px' }}>首</Tag>}
+                          <Button type="text" size="small" danger icon={<CloseOutlined />}
+                            style={{ fontSize: 9, minWidth: 14, minHeight: 14 }}
+                            onClick={() => deleteAlias(a.id)} />
                         </>
                       )}
                     </div>
                   ))}
+                  {prod.aliases.length > MAX_ALIASES_SHOW && (
+                    <Text style={{ fontSize: 9, color: '#999', textAlign: 'center' }}>
+                      +{prod.aliases.length - MAX_ALIASES_SHOW}个别名
+                    </Text>
+                  )}
                 </div>
-              )}
 
-              {/* 添加别名输入行 */}
-              <div style={{
-                display: 'flex', alignItems: 'center', gap: 6, marginTop: 4,
-                padding: '3px 6px', borderRadius: 4, background: '#fff',
-                border: '1px dashed #d9d9d9',
-              }}>
-                <PlusOutlined style={{ color: '#999', fontSize: 11 }} />
-                <Input
-                  size="small"
-                  placeholder="输入新别名后回车添加"
-                  value={newAliasValues[prod.product_id] || ''}
-                  onChange={e => setNewAliasValues(prev => ({ ...prev, [prod.product_id]: e.target.value }))}
-                  onPressEnter={() => addAlias(prod.product_id)}
-                  style={{ flex: 1, fontSize: 12 }}
-                />
-                <Button
-                  size="small"
-                  type="link"
-                  disabled={!(newAliasValues[prod.product_id] || '').trim()}
-                  onClick={() => addAlias(prod.product_id)}
-                  style={{ fontSize: 11 }}
-                >
-                  添加
-                </Button>
+                {/* 添加别名输入行 */}
+                <div style={{
+                  display: 'flex', alignItems: 'center', gap: 3, marginTop: 2,
+                  padding: '1px 4px', borderRadius: 3,
+                  border: '1px dashed #e8e8e8', background: '#fff',
+                }}>
+                  <PlusOutlined style={{ color: '#bbb', fontSize: 9 }} />
+                  <Input
+                    size="small"
+                    placeholder="添加别名"
+                    value={newAliasValues[prod.product_id] || ''}
+                    onChange={e => setNewAliasValues(prev => ({ ...prev, [prod.product_id]: e.target.value }))}
+                    onPressEnter={() => addAlias(prod.product_id)}
+                    onClick={(e) => e.stopPropagation()}
+                    style={{ flex: 1, fontSize: 10 }}
+                  />
+                </div>
               </div>
-            </div>
-          ))}
+            ))}
+          </div>
         </Card>
       ))}
     </div>
