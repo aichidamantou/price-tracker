@@ -367,14 +367,24 @@ def get_item(item_name: str):
 @app.post("/api/item/update-price")
 async def update_price(data: dict = {}):
     """修改某商品某日期的价格。"""
-    from .database import db_session, PriceHistory, upsert_price
+    from .database import db_session, Product, PriceHistory, upsert_price
+    from .storage import upsert_item_price
     product_id = data.get("product_id")
     price_date = data.get("date", "")
     new_price = data.get("price")
     if not product_id or not price_date:
         return JSONResponse(status_code=400, content={"error": "Missing product_id or date"})
+    item_name = None
     with db_session() as s:
+        prod = s.query(Product).filter(Product.id == product_id).first()
+        item_name = prod.name if prod else None
         upsert_price(s, product_id, new_price, price_date, "manual_correction")
+    # 同步到 prices.json，否则下次上传同步时会用 JSON 里的旧价覆盖本次手动修正
+    if item_name:
+        try:
+            upsert_item_price(item_name, price_date, new_price)
+        except Exception as e:
+            print(f"[update_price] 同步 prices.json 失败: {e}")
     return {"status": "ok", "updated": {"product_id": product_id, "date": price_date, "price": new_price}}
 
 
@@ -710,6 +720,7 @@ async def learn_alias(data: dict = {}):
 async def edit_product_name(data: dict = {}):
     """修改标准商品名称。"""
     from .database import db_session, Product, ProductAlias
+    from .storage import rename_item
     product_id = data.get("product_id")
     new_name = data.get("name", "").strip()
     if not product_id or not new_name:
@@ -721,7 +732,13 @@ async def edit_product_name(data: dict = {}):
         existing = s.query(Product).filter(Product.name == new_name, Product.id != product_id).first()
         if existing:
             return JSONResponse(status_code=400, content={"error": "Name already exists"})
+        old_name = prod.name
         prod.name = new_name
+    # 同步改名到 prices.json，否则下次上传会以旧名 carry-over 重建，造成新旧并存
+    try:
+        rename_item(old_name, new_name)
+    except Exception as e:
+        print(f"[edit_product_name] 同步 prices.json 失败: {e}")
     return {"status": "ok", "name": new_name}
 
 
@@ -748,14 +765,23 @@ async def edit_alias(data: dict = {}):
 async def edit_product_brand(data: dict = {}):
     """修改商品品牌。"""
     from .database import db_session, Product
+    from .storage import move_item_brand
     product_id = data.get("product_id")
     new_brand = data.get("brand", "").strip()
     if not product_id or not new_brand:
         return JSONResponse(status_code=400, content={"error": "Missing fields"})
+    item_name = None
     with db_session() as s:
         prod = s.query(Product).filter(Product.id == product_id).first()
         if prod:
+            item_name = prod.name
             prod.brand = new_brand
+    # 同步把商品在 prices.json 中移动到新品牌分组，保持两侧一致
+    if item_name:
+        try:
+            move_item_brand(item_name, new_brand)
+        except Exception as e:
+            print(f"[edit_product_brand] 同步 prices.json 失败: {e}")
     return {"status": "ok"}
 
 
@@ -763,15 +789,29 @@ async def edit_product_brand(data: dict = {}):
 
 @app.delete("/api/products/{product_id}")
 async def delete_product(product_id: int):
-    """删除商品及其别名和价格记录。"""
+    """删除商品及其别名和价格记录。
+
+    注意：系统是 SQLite + prices.json 双存储，上传时 parser 会以 prices.json
+    为历史基线做 carry-over 再同步回 SQLite。若只删 SQLite，被删商品会在下次
+    上传时被 prices.json 重新“带回”（复活）。因此这里必须同步从 prices.json 移除。
+    """
     from .database import db_session, Product, ProductAlias, PriceHistory
+    from .storage import remove_item
     with db_session() as s:
         prod = s.query(Product).filter(Product.id == product_id).first()
         if not prod:
             return JSONResponse(status_code=404, content={"error": "Product not found"})
+        deleted_name = prod.name
         s.query(PriceHistory).filter(PriceHistory.product_id == product_id).delete()
         s.query(ProductAlias).filter(ProductAlias.product_id == product_id).delete()
         s.delete(prod)
+
+    # 同步删除旧版 JSON 存储中的同名商品，防止下次上传时被 carry-over 复活
+    try:
+        remove_item(deleted_name)
+    except Exception as e:
+        print(f"[delete_product] 同步 prices.json 失败: {e}")
+
     return {"status": "ok"}
 
 
