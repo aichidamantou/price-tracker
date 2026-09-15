@@ -21,6 +21,7 @@ Excel 布局：
 异常价格检测：对比最近相邻日期的价格，偏差 ≥ 20元 → 弹窗提醒
 """
 
+import re
 from typing import Optional
 import openpyxl
 from .storage import load_all, save_all
@@ -38,14 +39,18 @@ ALERT_THRESHOLD = 20  # 偏差 ≥ 20元 触发提醒
 # ── 日期归一化 ──────────────────────────────────────────────
 
 def normalize_date(raw: str) -> str:
+    # 只接受纯数字日期串；“标准名称”这类非日期文本返回空串，
+    # 避免被 4 位分支错误拼成 “2026-标准-名称” 之类的畸形日期
     s = str(raw).strip().replace("-", "").replace("/", "")
+    if not s.isdigit():
+        return ""
     if len(s) == 4:          # MMDD → 补当前世纪 "26"
         return f"2026-{s[:2]}-{s[2:]}"
     if len(s) == 6:          # YYMMDD
         return f"20{s[:2]}-{s[2:4]}-{s[4:]}"
     if len(s) == 8:          # YYYYMMDD
         return f"{s[:4]}-{s[4:6]}-{s[6:]}"
-    return str(raw).strip()
+    return ""
 
 
 # ── 内部解析逻辑 ────────────────────────────────────────────
@@ -60,6 +65,11 @@ def _parse_excel_rows(filepath: str) -> tuple[str, list[dict], list[dict]]:
     rows = list(ws.iter_rows(min_row=1, max_col=2, values_only=True))
 
     date_str = normalize_date(str(rows[0][0]).strip()) if rows and rows[0][0] else ""
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date_str or ""):
+        raise ValueError(
+            f"无法识别 A1 单元格的日期：{rows[0][0] if rows else None!r}；"
+            "请在 A1 填写如 2026-09-13、20260913 或 0913 的日期"
+        )
 
     existing_data = load_all()
     existing_brands = existing_data.get("brands", [])
