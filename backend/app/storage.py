@@ -22,6 +22,9 @@ def _normalize_date_in_data(raw: str) -> str:
     不引入 parser 依赖，轻量实现。
     """
     s = str(raw).strip().replace("-", "").replace("/", "")
+    # 非纯数字文本（如误导入的表头“标准名称”）原样返回，不拼成畸形日期
+    if not s.isdigit():
+        return str(raw).strip()
     if len(s) == 4:
         return f"2026-{s[:2]}-{s[2:]}"
     if len(s) == 6:
