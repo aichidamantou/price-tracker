@@ -2,6 +2,7 @@ import React, { useState } from 'react'
 import { Spin, Empty, Typography, Card } from 'antd'
 import ItemCard from './ItemCard'
 import DetailModal from './DetailModal'
+import SummaryBar from './SummaryBar'
 
 const { Title } = Typography
 
@@ -33,6 +34,7 @@ export default function DashboardGrid({ brands, loading }) {
         @media (max-width: 600px)  { .price-grid { grid-template-columns: repeat(2, 1fr); } }
       `}</style>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <SummaryBar brands={brands} />
         {brands.map(brand => (
           <Card
             key={brand.brand}
