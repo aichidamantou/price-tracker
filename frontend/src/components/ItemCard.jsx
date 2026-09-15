@@ -3,25 +3,12 @@ import ReactEChartsCore from 'echarts-for-react/lib/core'
 import * as echarts from 'echarts/core'
 import { LineChart } from 'echarts/charts'
 import { GridComponent, TooltipComponent } from 'echarts/components'
-import { SVGRenderer } from 'echarts/renderers'
+import { CanvasRenderer } from 'echarts/renderers'
 import { Tooltip as AntTooltip } from 'antd'
+import { analyzePrices, hasQuote, colorRuns, fmtNum, STATUS_COLOR } from '../utils/priceStatus'
 
-// Register ECharts modules with SVG renderer
-echarts.use([LineChart, GridComponent, TooltipComponent, SVGRenderer])
-
-// 线条状态配色：涨=红 跌=绿 持平=黄 最近一次导入无报价(0/空)=蓝
-const STATUS_COLOR = {
-  up: '#ff4d4f',
-  down: '#52c41a',
-  flat: '#faad14',
-  nodata: '#1677ff',
-}
-
-const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/
-// 只认合法 ISO 日期，忽略误导入产生的畸形日期（如 “2026-标准-名称”）
-const validDate = (p) => !!p && ISO_DATE.test(p.date || '')
-// 价格为 null/undefined/0 都视为“无报价”，不参与绘图与比较
-const hasQuote = (p) => validDate(p) && p.price !== null && p.price !== undefined && Number(p.price) > 0
+// 迷你图数量多且分段 series 多，用 Canvas 渲染更省 DOM、滚动更流畅
+echarts.use([LineChart, GridComponent, TooltipComponent, CanvasRenderer])
 
 function fmtDate(isoDate) {
   if (!isoDate || isoDate.length < 10) return isoDate
@@ -30,13 +17,8 @@ function fmtDate(isoDate) {
   return `${m}/${d}`
 }
 
-function hexToRgba(hex, alpha) {
-  const n = parseInt(hex.replace('#', ''), 16)
-  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${alpha})`
-}
-
 export default function ItemCard({ item, brand, onClick }) {
-  // 只取历史上“有报价”的记录用于画线（按日期升序，最多近 30 条）
+  // 只取历史上“有报价”的记录用于画线（按日期升序，最多近 30 条，即卡片周期）
   const recentPrices = useMemo(() => {
     return (item.prices || [])
       .filter(hasQuote)
@@ -44,34 +26,24 @@ export default function ItemCard({ item, brand, onClick }) {
       .slice(-30)
   }, [item.prices])
 
-  // 根据“最近一次导入记录”判定整条线的状态/颜色
-  const { status, lineColor, latestPrice, latestDate, priceChange } = useMemo(() => {
-    const all = (item.prices || []).filter(validDate).sort((a, b) => a.date.localeCompare(b.date))
-    const valid = all.filter(hasQuote)
-    if (valid.length === 0) {
-      return { status: 'nodata', lineColor: STATUS_COLOR.nodata, latestPrice: null, latestDate: '', priceChange: 0 }
-    }
+  // 最近一次导入决定的整体状态（与顶部汇总口径一致）
+  const { status, lineColor, latestPrice, latestDate } = useMemo(
+    () => analyzePrices(item.prices),
+    [item.prices]
+  )
 
-    const lastRecord = all[all.length - 1]      // 最近一次导入记录（可能无报价）
-    const latest = valid[valid.length - 1]     // 最近一个有效价
-    const prev = valid.length >= 2 ? valid[valid.length - 2] : null
+  // 卡片“周期内”涨跌：窗口首点 → 末点
+  const period = useMemo(() => {
+    if (recentPrices.length < 2) return null
+    const first = recentPrices[0].price
+    const last = recentPrices[recentPrices.length - 1].price
+    const delta = last - first
+    return { delta, pct: first ? (delta / first) * 100 : 0 }
+  }, [recentPrices])
 
-    let s
-    let change = 0
-    if (!hasQuote(lastRecord)) {
-      s = 'nodata'                              // 最近一次导入为 0/空 → 蓝
-    } else if (!prev) {
-      s = 'flat'                                // 仅一个有效价、无可比项 → 黄
-    } else {
-      change = latest.price - prev.price
-      s = change > 0 ? 'up' : change < 0 ? 'down' : 'flat'
-    }
-
-    const color = STATUS_COLOR[s]
-    const d = latest.date || ''
-    const dateLabel = d.length >= 10 ? `${parseInt(d.slice(5, 7), 10)}/${parseInt(d.slice(8, 10), 10)}` : d
-    return { status: s, lineColor: color, latestPrice: latest.price, latestDate: dateLabel, priceChange: change }
-  }, [item.prices])
+  const periodColor = !period
+    ? STATUS_COLOR.flat
+    : period.delta > 0 ? STATUS_COLOR.up : period.delta < 0 ? STATUS_COLOR.down : STATUS_COLOR.flat
 
   const option = useMemo(() => {
     if (recentPrices.length === 0) return null
@@ -82,37 +54,39 @@ export default function ItemCard({ item, brand, onClick }) {
     const maxVal = Math.max(...values)
     const range = maxVal - minVal || 1
     const pad = range * 0.15
+    const nodata = status === 'nodata'
+
+    // 股票式分段：相邻同色合并为一段，多 series 保证每段颜色准确
+    const runs = colorRuns(values, nodata)
+    const runSeries = runs.map(([a, b, color]) => ({
+      type: 'line',
+      z: 2,
+      smooth: true,
+      symbol: 'none',
+      lineStyle: { width: 1.6, color },
+      itemStyle: { color },
+      data: values.map((v, idx) => {
+        if (idx < a || idx > b) return null
+        // 无行情时在末尾点画一个蓝色小圆点
+        if (idx === b && b === values.length - 1 && nodata) {
+          return { value: v, symbol: 'circle', symbolSize: 3.5, itemStyle: { color, borderColor: '#fff', borderWidth: 0.5 } }
+        }
+        return v
+      }),
+    }))
 
     return {
+      animation: false,
       grid: { left: 2, right: 2, top: 2, bottom: 2 },
       xAxis: { type: 'category', data: dates, show: false },
       yAxis: { type: 'value', show: false, min: minVal - pad, max: maxVal + pad },
-      series: [{
-        type: 'line',
-        data: values,
-        smooth: true,
-        symbol: 'none',
-        lineStyle: { width: 1.5, color: lineColor },
-        itemStyle: { color: lineColor },
-        // 面积用与线条同色的纵向淡渐变
-        areaStyle: {
-          color: {
-            type: 'linear',
-            x: 0, y: 0, x2: 0, y2: 1,
-            colorStops: [
-              { offset: 0, color: hexToRgba(lineColor, 0.18) },
-              { offset: 1, color: hexToRgba(lineColor, 0.02) },
-            ],
-          },
-        },
-      }],
+      series: runSeries,
       tooltip: {
         trigger: 'axis',
         formatter: (params) => {
-          const p = params[0]
-          const label = fmtDate(p.name)
-          const val = Array.isArray(p.data) ? p.data[1] : p.value
-          return `${label} <span style="color:#1677ff;font-weight:600">${val}</span>`
+          const arr = Array.isArray(params) ? params : [params]
+          const idx = arr[0]?.dataIndex ?? 0
+          return `${fmtDate(dates[idx])} <span style="color:#1677ff;font-weight:600">${values[idx]}</span>`
         },
         backgroundColor: 'transparent',
         borderColor: 'transparent',
@@ -121,7 +95,7 @@ export default function ItemCard({ item, brand, onClick }) {
         confine: true,
       },
     }
-  }, [recentPrices, lineColor])
+  }, [recentPrices, status])
 
   return (
     <AntTooltip title={`${item.name} — ${brand}${latestPrice !== null ? ` — ¥${latestPrice}` : ' — 暂无报价'}`}>
@@ -157,11 +131,12 @@ export default function ItemCard({ item, brand, onClick }) {
           {item.name}
         </div>
 
-        {/* Mini sparkline */}
+        {/* Mini sparkline（股票式分段多色） */}
         {option ? (
           <ReactEChartsCore
             echarts={echarts}
             option={option}
+            opts={{ renderer: 'canvas' }}
             style={{ height: 28, width: '100%' }}
             notMerge
             lazyUpdate
@@ -172,24 +147,26 @@ export default function ItemCard({ item, brand, onClick }) {
           </div>
         )}
 
-        {/* Latest date + price + change indicator（颜色与线条状态一致） */}
+        {/* 左下：最近日期+价格（整体状态色）；右下：卡片周期内涨跌额+幅度 */}
         <div style={{
           fontSize: 10,
           fontWeight: 600,
           padding: '0 4px 3px',
           color: lineColor,
           display: 'flex',
-          alignItems: 'center',
-          gap: 2,
+          alignItems: 'baseline',
+          justifyContent: 'space-between',
+          gap: 4,
           lineHeight: '14px',
         }}>
-          {latestPrice !== null ? (
-            <>{latestDate} ¥{latestPrice}</>
-          ) : '—'}
-          {/* 仅在确实发生涨跌时显示箭头；无报价/持平不显示 */}
-          {priceChange !== 0 && (status === 'up' || status === 'down') && (
-            <span style={{ fontSize: 9 }}>
-              {priceChange > 0 ? `↑${priceChange}` : `↓${Math.abs(priceChange)}`}
+          <span style={{ whiteSpace: 'nowrap' }}>
+            {latestPrice !== null ? <>{latestDate} ¥{latestPrice}</> : '—'}
+          </span>
+          {period && (
+            <span style={{ color: periodColor, whiteSpace: 'nowrap', fontSize: 9.5 }}>
+              {period.delta > 0 ? '↑' : period.delta < 0 ? '↓' : ''}
+              {fmtNum(Math.abs(period.delta))}
+              <span style={{ opacity: 0.75 }}> {period.pct >= 0 ? '+' : ''}{period.pct.toFixed(1)}%</span>
             </span>
           )}
         </div>
