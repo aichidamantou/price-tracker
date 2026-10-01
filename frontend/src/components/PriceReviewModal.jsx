@@ -2,6 +2,7 @@ import React, { useState, useMemo } from 'react'
 import { Modal, Table, InputNumber, Button, Tag, Typography, Space, message } from 'antd'
 
 const { Text } = Typography
+import { T } from '../utils/theme'
 
 export default function PriceReviewModal({
   open,
@@ -109,7 +110,7 @@ export default function PriceReviewModal({
       render: (_, record) => {
         const corrected = corrections[record.item_name] ?? record.new_price
         const diff = corrected - record.old_price
-        const color = diff > 0 ? '#ff4d4f' : diff < 0 ? '#52c41a' : '#999'
+        const color = diff > 0 ? T.up : diff < 0 ? T.down : T.textDim
         return (
           <Text style={{ color, fontWeight: 600, fontSize: 13 }}>
             {diff > 0 ? `↑${diff}` : diff < 0 ? `↓${Math.abs(diff)}` : '—'}
@@ -159,7 +160,7 @@ export default function PriceReviewModal({
       }
       destroyOnClose
     >
-      <div style={{ marginBottom: 12, color: '#666', fontSize: 13 }}>
+      <div style={{ marginBottom: 12, color: T.textSub, fontSize: 13 }}>
         以下 <strong>{alerts.length}</strong> 项价格与上期差异 ≥ 20 元，请核对：
       </div>
 

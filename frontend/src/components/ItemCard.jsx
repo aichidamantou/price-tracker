@@ -6,6 +6,7 @@ import { GridComponent, TooltipComponent } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
 import { Tooltip as AntTooltip } from 'antd'
 import { analyzePrices, hasQuote, colorRuns, fmtNum, STATUS_COLOR } from '../utils/priceStatus'
+import { T } from '../utils/theme'
 
 // 迷你图数量多且分段 series 多，用 Canvas 渲染更省 DOM、滚动更流畅
 echarts.use([LineChart, GridComponent, TooltipComponent, CanvasRenderer])
@@ -17,7 +18,7 @@ function fmtDate(isoDate) {
   return `${m}/${d}`
 }
 
-export default function ItemCard({ item, brand, onClick }) {
+export default function ItemCard({ item, brand, onClick, onCostClick }) {
   // 只取历史上“有报价”的记录用于画线（按日期升序，最多近 30 条，即卡片周期）
   const recentPrices = useMemo(() => {
     return (item.prices || [])
@@ -69,7 +70,7 @@ export default function ItemCard({ item, brand, onClick }) {
         if (idx < a || idx > b) return null
         // 无行情时在末尾点画一个蓝色小圆点
         if (idx === b && b === values.length - 1 && nodata) {
-          return { value: v, symbol: 'circle', symbolSize: 3.5, itemStyle: { color, borderColor: '#fff', borderWidth: 0.5 } }
+          return { value: v, symbol: 'circle', symbolSize: 3.5, itemStyle: { color, borderColor: T.card, borderWidth: 0.5 } }
         }
         return v
       }),
@@ -86,7 +87,7 @@ export default function ItemCard({ item, brand, onClick }) {
         formatter: (params) => {
           const arr = Array.isArray(params) ? params : [params]
           const idx = arr[0]?.dataIndex ?? 0
-          return `${fmtDate(dates[idx])} <span style="color:#1677ff;font-weight:600">${values[idx]}</span>`
+          return `${fmtDate(dates[idx])} <span style="color:${T.primary};font-weight:600">${values[idx]}</span>`
         },
         backgroundColor: 'transparent',
         borderColor: 'transparent',
@@ -97,38 +98,105 @@ export default function ItemCard({ item, brand, onClick }) {
     }
   }, [recentPrices, status])
 
+  // 公司价（烟草公司进货价）与盈亏：最新售价 - 公司价
+  // 盈利(>0) → 红；倒挂(<0，成本高于售价) → 绿；持平 → 橙。与全站涨红跌绿口径一致。
+  const cost = item.cost !== null && item.cost !== undefined ? Number(item.cost) : null
+  const profit = (cost !== null && latestPrice !== null) ? latestPrice - cost : null
+  const profitColor = profit === null
+    ? T.textDim
+    : profit > 0 ? STATUS_COLOR.up : profit < 0 ? STATUS_COLOR.down : STATUS_COLOR.flat
+  const profitText = profit === null
+    ? ''
+    : `${profit > 0 ? '+' : profit < 0 ? '-' : ''}${fmtNum(Math.abs(profit))}`
+
+  const costLine = cost === null
+    ? '公司价：暂缺 —— 点击卡片上的「暂缺数据」录入进货价与生效日期'
+    : `公司价：¥${fmtNum(cost)}${item.cost_effective_from ? `（${item.cost_effective_from} 起）` : ''}`
+      + (profit === null
+        ? ''
+        : profit > 0 ? ` · 盈利 ${profitText}`
+          : profit < 0 ? ` · 倒挂 ${profitText}` : ' · 持平')
+      + ' —— 点击可修改'
+
   return (
-    <AntTooltip title={`${item.name} — ${brand}${latestPrice !== null ? ` — ¥${latestPrice}` : ' — 暂无报价'}`}>
+    <AntTooltip
+      title={
+        <div style={{ fontSize: 11, lineHeight: 1.6 }}>
+          <div>{item.name} — {brand}{latestPrice !== null ? ` — ¥${latestPrice}` : ' — 暂无报价'}</div>
+          <div>{costLine}</div>
+        </div>
+      }
+    >
       <div
         onClick={onClick}
         style={{
-          background: '#fafafa',
+          background: T.card,
           borderRadius: 6,
-          border: '1px solid #f0f0f0',
+          border: `1px solid ${T.borderSoft}`,
           cursor: 'pointer',
           transition: 'all 0.2s',
           overflow: 'hidden',
         }}
         onMouseEnter={e => {
-          e.currentTarget.style.borderColor = '#1677ff'
-          e.currentTarget.style.boxShadow = '0 1px 4px rgba(22,119,255,0.2)'
+          e.currentTarget.style.borderColor = T.primary
+          e.currentTarget.style.boxShadow = '0 0 0 1px rgba(0,212,255,0.35), 0 2px 10px rgba(0,212,255,0.18)'
         }}
         onMouseLeave={e => {
-          e.currentTarget.style.borderColor = '#f0f0f0'
+          e.currentTarget.style.borderColor = T.borderSoft
           e.currentTarget.style.boxShadow = 'none'
         }}
       >
-        {/* Product name */}
+        {/* 商品名 + 右侧公司价（倒挂绿 / 盈利红）
+            flexWrap：短名并排一行；名字太长时公司价自动落到第二行，不牺牲商品名 */}
         <div style={{
           fontSize: 10,
           lineHeight: '14px',
           padding: '3px 4px 1px',
-          color: '#333',
+          display: 'flex',
+          flexWrap: 'wrap',
+          alignItems: 'center',
+          gap: '0 3px',
           overflow: 'hidden',
-          textOverflow: 'ellipsis',
-          whiteSpace: 'nowrap',
         }}>
-          {item.name}
+          <span style={{
+            color: T.text,
+            flex: '0 1 auto',
+            minWidth: 0,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+          }}>
+            {item.name}
+          </span>
+
+          {cost === null ? (
+            <span
+              onClick={(e) => { e.stopPropagation(); onCostClick && onCostClick(item) }}
+              style={{
+                flexShrink: 0, fontSize: 9, lineHeight: '13px', cursor: 'pointer',
+                color: T.warnText, background: T.warnBg,
+                border: `1px dashed ${T.warnBorder}`, borderRadius: 3, padding: '0 3px',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              暂缺数据
+            </span>
+          ) : (
+            <span
+              onClick={(e) => { e.stopPropagation(); onCostClick && onCostClick(item) }}
+              style={{
+                flexShrink: 0, fontSize: 9, lineHeight: '13px', cursor: 'pointer',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              <span style={{ color: T.textSub }}>（公司价</span>
+              <span style={{ color: T.text, fontWeight: 600, marginLeft: 1 }}>{fmtNum(cost)}</span>
+              {profit !== null && (
+                <span style={{ color: profitColor, fontWeight: 600, marginLeft: 3 }}>{profitText}</span>
+              )}
+              <span style={{ color: T.textSub }}>）</span>
+            </span>
+          )}
         </div>
 
         {/* Mini sparkline（股票式分段多色） */}
@@ -142,7 +210,7 @@ export default function ItemCard({ item, brand, onClick }) {
             lazyUpdate
           />
         ) : (
-          <div style={{ height: 28, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, color: '#999' }}>
+          <div style={{ height: 28, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, color: T.textDim }}>
             无数据
           </div>
         )}

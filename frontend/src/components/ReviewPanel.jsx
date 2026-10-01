@@ -4,6 +4,7 @@ import { CheckCircleOutlined, DeleteOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
 
 const { Text } = Typography
+import { T } from '../utils/theme'
 const API_BASE = ''
 
 /**
@@ -122,7 +123,7 @@ export default function ReviewPanel({ items, onRefresh, onCancel, title, initial
         {onRefresh && <Button size="small" onClick={onRefresh}>重新匹配</Button>}
       </div>
 
-      <div style={{ display:'flex', gap:6, padding:'6px 8px', fontSize:12, fontWeight:700, borderBottom:'1px solid #f0f0f0' }}>
+      <div style={{ display:'flex', gap:6, padding:'6px 8px', fontSize:12, fontWeight:700, borderBottom:`1px solid ${T.borderSoft}` }}>
         <div style={{ width:95 }}>原文</div>
         <div style={{ width:150 }}>品牌</div>
         <div style={{ width:210 }}>商品名</div>
@@ -136,7 +137,7 @@ export default function ReviewPanel({ items, onRefresh, onCancel, title, initial
           return (
             <div key={item._rid} style={{
               display:'flex', alignItems:'center', gap:6, padding:'6px 8px', marginBottom:3, borderRadius:4,
-              background: fixed ? '#f6ffed' : '#fffbe6', fontSize:11,
+              background: fixed ? T.primaryBg : T.warnBg, fontSize:11,
             }}>
               <Text code style={{ fontSize:11, width:95, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', flexShrink:0 }}>{item.input}</Text>
 
@@ -151,10 +152,10 @@ export default function ReviewPanel({ items, onRefresh, onCancel, title, initial
                   }}
                 />
                 {brandSearch[item._rid]?.length > 0 && (
-                  <div style={{position:'absolute', top:'100%', left:0, right:0, zIndex:10, background:'#fff', border:'1px solid #d9d9d9', borderRadius:4, maxHeight:150, overflowY:'auto', boxShadow:'0 2px 8px rgba(0,0,0,0.1)'}}>
+                  <div style={{position:'absolute', top:'100%', left:0, right:0, zIndex:10, background: T.cardAlt, border:`1px solid ${T.borderSoft}`, borderRadius:4, maxHeight:150, overflowY:'auto', boxShadow:'0 6px 18px rgba(0,0,0,0.5)'}}>
                     {brandSearch[item._rid].map(b => (
                       <div key={b} onClick={() => handleBrandSel(item._rid, b)} style={{padding:'4px 8px', cursor:'pointer', fontSize:11}}
-                        onMouseEnter={e => e.target.style.background='#f0f5ff'}
+                        onMouseEnter={e => e.target.style.background=T.hover}
                         onMouseLeave={e => e.target.style.background='transparent'}>{b}</div>
                     ))}
                   </div>
@@ -182,11 +183,11 @@ export default function ReviewPanel({ items, onRefresh, onCancel, title, initial
                     : item.matched_id ? <Tag color="blue" style={{fontSize:9, lineHeight:'16px', margin:0}}>已匹配</Tag> : null}
                 />
                 {prodSearch[item._rid]?.length > 0 && !item.matched_id && (
-                  <div style={{position:'absolute', top:'100%', left:0, right:0, zIndex:10, background:'#fff', border:'1px solid #d9d9d9', borderRadius:4, maxHeight:150, overflowY:'auto', boxShadow:'0 2px 8px rgba(0,0,0,0.1)'}}>
+                  <div style={{position:'absolute', top:'100%', left:0, right:0, zIndex:10, background: T.cardAlt, border:`1px solid ${T.borderSoft}`, borderRadius:4, maxHeight:150, overflowY:'auto', boxShadow:'0 6px 18px rgba(0,0,0,0.5)'}}>
                     {prodSearch[item._rid].map(p => (
                       <div key={p.id} onClick={() => handleProdSel(item._rid, p.id, p.name, item.brand)}
-                        style={{padding:'4px 8px', cursor:'pointer', fontSize:11, borderBottom:'1px solid #f5f5f5'}}
-                        onMouseEnter={e => e.target.style.background='#f0f5ff'}
+                        style={{padding:'4px 8px', cursor:'pointer', fontSize:11, borderBottom:`1px solid ${T.borderFaint}`}}
+                        onMouseEnter={e => e.target.style.background=T.hover}
                         onMouseLeave={e => e.target.style.background='transparent'}>
                         {p.brand ? `[${p.brand}] ` : ''}{p.name}
                       </div>

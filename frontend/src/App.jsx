@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react'
-import { ConfigProvider, Layout, Typography, Button, Upload, message, Tooltip, Menu, Drawer } from 'antd'
-import { UploadOutlined, DownloadOutlined, CloudServerOutlined, FileExcelOutlined, SnippetsOutlined, DashboardOutlined, AlignLeftOutlined, ThunderboltOutlined, MenuOutlined } from '@ant-design/icons'
+import { ConfigProvider, Layout, Typography, Button, Upload, message, Tooltip, Menu, Drawer, theme as antdAlgo } from 'antd'
+import { UploadOutlined, DownloadOutlined, CloudServerOutlined, FileExcelOutlined, SnippetsOutlined, DashboardOutlined, AlignLeftOutlined, ThunderboltOutlined, MenuOutlined, RobotOutlined } from '@ant-design/icons'
 import zhCN from 'antd/locale/zh_CN'
 import SearchBar from './components/SearchBar'
 import DashboardGrid from './components/DashboardGrid'
@@ -8,12 +8,19 @@ import DetailModal from './components/DetailModal'
 import PriceReviewModal from './components/PriceReviewModal'
 import BackupRestoreModal from './components/BackupRestoreModal'
 import PasteReviewModal from './components/PasteReviewModal'
-import AliasManager from './components/AliasManager'
+import ProductManager from './components/ProductManager'
+import AIAnalysis from './components/AIAnalysis'
 import AIMatcher from './components/AIMatcher'
 import { usePriceStore } from './store/priceStore'
+import { T, antdTheme, globalCss } from './utils/theme'
 
 const { Header, Content, Sider } = Layout
 const { Title } = Typography
+
+const appTheme = {
+  ...antdTheme,
+  algorithm: antdAlgo.darkAlgorithm,
+}
 
 export default function App() {
   const { brands, loading, fetchDashboard, previewUpload, confirmUpload } = usePriceStore()
@@ -62,21 +69,23 @@ export default function App() {
     { key: 'upload_excel', icon: <FileExcelOutlined />, label: 'Excel上传' },
     { key: 'paste', icon: <SnippetsOutlined />, label: '粘贴上传' },
     { key: 'ai', icon: <ThunderboltOutlined />, label: 'AI 匹配' },
-    { key: 'aliases', icon: <AlignLeftOutlined />, label: '别名管理' },
+    { key: 'products', icon: <AlignLeftOutlined />, label: '商品管理' },
+    { key: 'ai_analysis', icon: <RobotOutlined />, label: 'AI 分析' },
   ]
 
   const handleMenuClick = ({ key }) => {
     if (key === 'upload_excel') { fileInputRef.current?.click(); if (isMobile) setMobileOpen(false); return }
     if (key === 'paste') { setPasteOpen(true); if (isMobile) setMobileOpen(false); return }
     if (key === 'ai') { setAiOpen(true); if (isMobile) setMobileOpen(false); return }
-    setCurrentView(key)
+    // 旧视图 key 'aliases' 保留跳转，统一落到商品管理
+    setCurrentView(key === 'aliases' ? 'products' : key)
     if (isMobile) setMobileOpen(false)
   }
 
   const siderContent = (
     <>
-      <div style={{ height: 48, display: 'flex', alignItems: 'center', justifyContent: 'center', borderBottom: '1px solid #f0f0f0' }}>
-        <Title level={5} style={{ margin: 0, fontSize: 14 }}>📊 价格追踪</Title>
+      <div style={{ height: 48, display: 'flex', alignItems: 'center', justifyContent: 'center', borderBottom: `1px solid ${T.borderSoft}` }}>
+        <Title level={5} style={{ margin: 0, fontSize: 14, color: T.primary }}>价格追踪看板</Title>
       </div>
       <input type="file" ref={fileInputRef} accept=".xlsx,.xls" onChange={handleFileSelect} style={{ display: 'none' }} />
       <Menu mode="inline" selectedKeys={[currentView]} onClick={handleMenuClick} items={menuItems} style={{ borderRight: 0, marginTop: 4 }} />
@@ -84,11 +93,12 @@ export default function App() {
   )
 
   return (
-    <ConfigProvider locale={zhCN}>
-      <Layout style={{ minHeight: '100vh', background: '#f5f5f5' }}>
+    <ConfigProvider locale={zhCN} theme={appTheme}>
+      <style>{globalCss}</style>
+      <Layout style={{ minHeight: '100vh', background: T.page }}>
         {/* Desktop sidebar */}
         {!isMobile && (
-          <Sider width={180} style={{ background: '#fff', borderRight: '1px solid #f0f0f0', height: '100vh', position: 'fixed', left: 0, top: 0, zIndex: 200 }}>
+          <Sider width={180} style={{ background: T.cardAlt, borderRight: `1px solid ${T.borderSoft}`, height: '100vh', position: 'fixed', left: 0, top: 0, zIndex: 200 }}>
             {siderContent}
           </Sider>
         )}
@@ -102,8 +112,9 @@ export default function App() {
 
         <Layout style={{ marginLeft: isMobile ? 0 : 180 }}>
           <Header style={{
-            background: '#fff', padding: '0 8px', display: 'flex', alignItems: 'center',
-            justifyContent: 'space-between', boxShadow: '0 1px 4px rgba(0,0,0,0.08)',
+            background: T.glass, backdropFilter: T.glassBlur, padding: '0 8px',
+            display: 'flex', alignItems: 'center',
+            justifyContent: 'space-between', borderBottom: `1px solid ${T.borderSoft}`,
             position: 'sticky', top: 0, zIndex: 100, height: 48,
           }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -119,7 +130,8 @@ export default function App() {
 
           <Content style={{ padding: isMobile ? '4px' : '8px 12px', minHeight: 'calc(100vh - 48px)' }}>
             {currentView === 'dashboard' && <DashboardGrid brands={brands} loading={loading} />}
-            {currentView === 'aliases' && <AliasManager />}
+            {(currentView === 'products' || currentView === 'aliases') && <ProductManager />}
+            {currentView === 'ai_analysis' && <AIAnalysis />}
           </Content>
         </Layout>
       </Layout>

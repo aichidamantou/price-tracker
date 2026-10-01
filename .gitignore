@@ -7,3 +7,6 @@ data/
 frontend/dist/
 backend/static/
 *.tar.gz
+
+# 本地工作记忆（含服务器凭据、部署记录，绝不入库）
+.workbuddy-ai/

@@ -3,11 +3,16 @@ import { Spin, Empty, Typography, Card } from 'antd'
 import ItemCard from './ItemCard'
 import DetailModal from './DetailModal'
 import SummaryBar from './SummaryBar'
+import CostEntryModal from './CostEntryModal'
+import { usePriceStore } from '../store/priceStore'
+import { T } from '../utils/theme'
 
 const { Title } = Typography
 
 export default function DashboardGrid({ brands, loading }) {
   const [detailItem, setDetailItem] = useState(null)
+  const [costItem, setCostItem] = useState(null)
+  const fetchDashboard = usePriceStore(s => s.fetchDashboard)
 
   React.useEffect(() => {
     const handler = (e) => setDetailItem(e.detail)
@@ -40,8 +45,8 @@ export default function DashboardGrid({ brands, loading }) {
             key={brand.brand}
             size="small"
             title={
-              <Title level={5} style={{ margin: 0, color: '#1677ff' }}>
-                {brand.brand} <span style={{fontSize:12,color:'#999',fontWeight:400}}>({(brand.items||[]).length}种)</span>
+              <Title level={5} style={{ margin: 0, color: T.primary }}>
+                {brand.brand} <span style={{fontSize:12,color:T.textDim,fontWeight:400}}>({(brand.items||[]).length}种)</span>
               </Title>
             }
             styles={{ body: { padding: 8 } }}
@@ -56,6 +61,7 @@ export default function DashboardGrid({ brands, loading }) {
                     item={item}
                     brand={brand.brand}
                     onClick={() => setDetailItem({ name: item.name, brand: brand.brand })}
+                    onCostClick={setCostItem}
                   />
                 </div>
               ))}
@@ -68,6 +74,13 @@ export default function DashboardGrid({ brands, loading }) {
         item={detailItem}
         brands={brands}
         onClose={() => setDetailItem(null)}
+      />
+
+      <CostEntryModal
+        open={!!costItem}
+        item={costItem}
+        onClose={() => setCostItem(null)}
+        onSaved={fetchDashboard}
       />
     </>
   )

@@ -3,6 +3,7 @@ import { Modal, Button, List, Tag, Space, message, Typography, Spin, Popconfirm,
 import { SaveOutlined, RollbackOutlined, DownloadOutlined, ReloadOutlined } from '@ant-design/icons'
 
 const { Text } = Typography
+import { T } from '../utils/theme'
 
 const API_BASE = ''
 
@@ -88,13 +89,13 @@ export default function BackupRestoreModal({ open, onClose }) {
         </Space>
       </div>
 
-      <div style={{ marginBottom: 8, color: '#666', fontSize: 13 }}>
+      <div style={{ marginBottom: 8, color: T.textSub, fontSize: 13 }}>
         点击"立即备份"将在群晖保存一份，同时下载到浏览器
       </div>
 
       <Spin spinning={loading}>
         {backups.length === 0 ? (
-          <div style={{ padding: 24, textAlign: 'center', color: '#999' }}>暂无备份</div>
+          <div style={{ padding: 24, textAlign: 'center', color: T.textDim }}>暂无备份</div>
         ) : (
           <List
             size="small"

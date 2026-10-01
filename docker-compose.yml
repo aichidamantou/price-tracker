@@ -3,169 +3,219 @@
 # ════════════════════════════════════════════════════════════════════════════════
 #
 # ┌─────────────────────────────────────────────────────────────────────────────┐
-# │ 【架构总览】单容器，FastAPI 后端 + React 前端（预构建静态文件）             │
-# │                                                                             │
-# │   ┌────────────────────────────────────────────────┐                       │
-# │   │  容器: price-tracker-app                   8000│                       │
-# │   │  ├─ POST /api/upload          一键上传(无核对)  │                       │
-# │   │  ├─ POST /api/upload/preview   Phase1:解析+检测  │                       │
-# │   │  ├─ POST /api/upload/confirm   Phase2:确认+保存  │                       │
-# │   │  ├─ GET  /api/dashboard        全量聚合数据      │                       │
-# │   │  ├─ GET  /api/item/{name}      单商品历史序列    │                       │
-# │   │  ├─ GET  /api/template         下载今日价格模板  │                       │
-# │   │  └─ GET  /                     前端 SPA 入口     │                       │
-# │   ├─ 静态文件 (frontend/dist → /app/static)          │                       │
-# │   └─ 数据持久化 (/data/prices.json, threading.Lock)  │                       │
-# │                                                                             │
-# │ 端口：  8889 → 8000       内存：shm_size 256mb / mem_limit 512m            │
-# │ 数据：  ./data → /data（宿主机挂载持久化，必须保留）                         │
-# │ 重启：  unless-stopped                                                      │
+# │ 【架构总览】单容器，FastAPI + React（预构建静态文件）                       │
+# │                                                                            │
+# │  ┌──────────────────────────────────────────────┐                          │
+# │  │  容器: price-tracker-app         端口 8000    │                          │
+# │  │  ├─ 后端 API                              │                          │
+# │  │  │  ├─ POST /api/upload              Excel上传(两阶段核对)      │                          │
+# │  │  │  ├─ POST /api/upload/preview      解析+异常检测               │                          │
+# │  │  │  ├─ POST /api/upload/confirm      确认保存(prices.json)       │                          │
+# │  │  │  ├─ POST /api/paste/preview       粘贴文本 → 引擎匹配          │                          │
+# │  │  │  ├─ POST /api/paste/deepseek-compare 粘贴文本 → DeepSeek比对   │                          │
+# │  │  │  ├─ POST /api/paste/confirm       保存粘贴结果(含新品自动创建)  │                          │
+# │  │  │  ├─ GET  /api/dashboard           全量聚合数据                │                          │
+# │  │  │  ├─ GET  /api/item/{name}         单商品历史 + product_id     │                          │
+# │  │  │  ├─ POST /api/item/update-price   修改某日价格                │                          │
+# │  │  │  ├─ GET  /api/template            下载今日价格模板            │                          │
+# │  │  │  ├─ GET  /api/backups             备份列表                   │                          │
+# │  │  │  ├─ POST /api/backup             创建备份                    │                          │
+# │  │  │  ├─ POST /api/restore/{name}     还原备份                    │                          │
+# │  │  │  ├─ GET  /api/products/search/{q} 商品搜索(自动完成)          │                          │
+# │  │  │  ├─ GET  /api/aliases/manage     商品管理列表(含进货价/倒挂)   │                          │
+# │  │  │  ├─ POST /api/aliases/reorder    别名拖拽排序                 │                          │
+# │  │  │  ├─ POST /api/aliases/add         添加别名                   │                          │
+# │  │  │  ├─ POST /api/aliases/delete      删除别名                   │                          │
+# │  │  │  ├─ POST /api/aliases/learn       自动学习别名(用户修正后)     │                          │
+# │  │  │  ├─ POST /api/aliases/edit-product 编辑标准名称               │                          │
+# │  │  │  ├─ POST /api/aliases/edit-alias   编辑别名                   │                          │
+# │  │  │  ├─ POST /api/aliases/reorder-brands   地区(品牌)排序         │                          │
+# │  │  │  ├─ POST /api/aliases/reorder-products 同品牌内商品排序        │                          │
+# │  │  │  ├─ POST /api/products              新增标准商品(可带进货价)    │                          │
+# │  │  │  ├─ PATCH /api/products/{id}/cost    更新当前进货价(自动记历史) │                          │
+# │  │  │  ├─ GET  /api/products/{id}/cost/history 进货价历史           │                          │
+# │  │  │  ├─ POST /api/products/{id}/cost/history 补录历史进货价        │                          │
+# │  │  │  ├─ PATCH /api/products/cost/history/{id} 修改某条历史(撞日可合并)│                         │
+# │  │  │  ├─ DELETE /api/products/cost/history/{id} 删除历史并重算当前价 │                          │
+# │  │  │  ├─ POST /api/products/cost/import   Excel批量导入进货价      │                          │
+# │  │  │  ├─ GET  /api/products/cost/template 进货价导入模板           │                          │
+# │  │  │  ├─ GET  /api/export/analysis      AI分析导出(格式已冻结)      │                          │
+# │  │  │  ├─ POST /api/recover             JSON备份→SQLite恢复         │                          │
+# │  │  │  ├─ POST /api/seed                重新种子商品库               │                          │
+# │  │  │  └─ GET  /                        前端 SPA 入口               │                          │
+# │  │  │                                                              │                          │
+# │  │  │  【AI 分析模块 · ai_analysis.py 独立路由】                     │                          │
+# │  │  │  ├─ POST /api/export/prices        导出数据(内嵌系统提示词)     │                          │
+# │  │  │  ├─ GET  /api/ai/prompt            取系统提示词                │                          │
+# │  │  │  ├─ POST /api/ai/import            粘贴导入(容错解析+幂等判重)  │                          │
+# │  │  │  ├─ GET  /api/ai/list              时间线列表(含生成列)         │                          │
+# │  │  │  ├─ GET  /api/ai/{id}              详情(结构化 analysis_data)  │                          │
+# │  │  │  ├─ GET  /api/ai/{id}/charts       聚合图表数据(前端不再自己算) │                          │
+# │  │  │  └─ DELETE /api/ai/{id}            删除批次                    │                          │
+# │  │  ├─ 前端静态文件 (frontend/dist → /app/static)                    │                          │
+# │  │  └─ SQLite 数据库 (/data/prices.db, WAL模式, threading.Lock)      │                          │
+# │  │     表: products / product_aliases / price_history /              │                          │
+# │  │         brand_order / product_cost / ai_analysis                 │                          │
+# │  │     注意: 检测生成列必须用 PRAGMA table_xinfo (table_info 不含)    │                          │
+# │  └──────────────────────────────────────────────┘                          │
+# │                                                                            │
+# │  端口：8889 → 8000   shm_size: 256mb   mem_limit: 512m                    │
+# │  数据：./data → /data（宿主机挂载，prices.db + backups/）                  │
+# │  重启：unless-stopped  时区：Asia/Shanghai                                  │
 # └─────────────────────────────────────────────────────────────────────────────┘
 #
 # ┌─────────────────────────────────────────────────────────────────────────────┐
-# │ 【两阶段上传流程 — 价格异常检测】                                            │
-# │                                                                             │
-# │  点击"上传" → Phase1: /api/upload/preview                                   │
-# │     ├─ 解析 Excel（不保存到 prices.json）                                   │
-# │     ├─ 逐项比对相邻历史价格                                                  │
-# │     │   ├─ 偏差 ≥ 20元 → 加入 alerts 列表                                   │
-# │     │   └─ 偏差 < 20元 或 无历史数据 → 自动通过                              │
-# │     └─ 有 alerts → 打开 PriceReviewModal                                    │
-# │                    └─ 用户可修改/还原/跳过                                  │
-# │     └─ 无 alerts → 自动执行 /api/upload/confirm                             │
+# │ 【三表 SQLite 数据库 — /data/prices.db】                                     │
 # │                                                                            │
-# │  Phase2: /api/upload/confirm (session_id, corrections)                     │
-# │    └─ 应用修正 → 合并保存到 prices.json                                    │
-# │                                                                            │
-# │  PriceReviewModal 弹窗列：                                                  │
-# │   品牌 | 商品名 | 上期价格 | 新价格(可修改) | 差额(涨↓色) | [还原]          │
-# └─────────────────────────────────────────────────────────────────────────────┘
-#
-# ┌─────────────────────────────────────────────────────────────────────────────┐
-# │ 【Excel 上传格式】                                                          │
-# │                                                                             │
-# │  Row 1:  日期 → 统一归一化为 YYYY-MM-DD ISO 格式                           │
-# │             "0621"      (MMDD)     → 2026-06-21                             │
-# │             "260621"    (YYMMDD)   → 2026-06-21                             │
-# │             "20260621"  (YYYYMMDD) → 2026-06-21                             │
-# │             "2026-06-21" (ISO)     → 原样保留                               │
-# │                                                                             │
-# │  Row 2+: 品牌分区 + 商品行                                                   │
-# │   品牌行: col A = 品牌名, col B = 空                                        │
-# │   商品行: col A = 商品名, col B = 价格（int/float）                         │
-# │   价格 = 0 或空 → 记为无报价，图表显示断点                                   │
-# │                                                                             │
-# │  ⚠ 品牌行识别只基于 KNOWN_BRANDS 硬编码列表，不从历史学！                   │
-# │    KNOWN_BRANDS = 云南/浙江/上海/湖北/湖南/河南/河北/广西                   │
-# │                    江苏/内蒙/山东/江西/贵州/四川/福建/吉林                   │
-# │                    广东/安徽/陕西/重庆/甘肃/哈尔滨/公司进口                 │
-# └─────────────────────────────────────────────────────────────────────────────┘
-#
-# ┌─────────────────────────────────────────────────────────────────────────────┐
-# │ 【数据合并策略 — Upsert】                                                    │
-# │  ① 新商品 → 追加到对应品牌末尾                                               │
-# │  ② 旧商品 → 更新该日期的价格（覆盖）或新增日期                               │
-# │  ③ 历史品牌本次未出现 → 完整保留                                           │
-# │  ④ 历史商品本次未出现 → 保留全部历史价格数据                                 │
-# │  ⑤ 同一日期多次上传 → 更新价格，不重复创建记录                              │
-# │  ⑥ 线程锁 threading.Lock 防并发写入损坏                                     │
-# └─────────────────────────────────────────────────────────────────────────────┘
-#
-# ┌─────────────────────────────────────────────────────────────────────────────┐
-# │ 【前端 UI 交互】                                                             │
-# │  技术栈：React 18 + Vite 5 + Ant Design 5 + ECharts 5 + Zustand           │
-# │  图表渲染：SVG（非Canvas）— 群晖低内存适配                                   │
-# │                                                                            │
-# │  布局：                                                                    │
-# │  ┌─────────────────────────────────────────────────────┐                   │
-# │  │ 📊 价格追踪看板  [搜索栏────]   [上传] [模板下载]    │                   │
-# │  ├─────────────────────────────────────────────────────┤                   │
-# │  │ 云南  ┌────┐┌────┐┌────┐┌────┐┌────┐┌────┐┌────┐┌──┤  每行8列    │
-# │  │       │商品││商品││商品││商品││商品││商品││商品││商 │               │
-# │  │       │¥650││¥430││... ││    ││    ││    ││    ││品 │               │
-# │  │       │↑12 ││↓5  ││    ││    ││    ││    ││    ││   │               │
-# │  │       └────┘└────┘└────┘└────┘└────┘└────┘└────┘└───┘               │
-# │  └──────────────────────────────────────────────────────────────────────┘ │
-# │                                                                            │
-# │  每个商品卡片 ItemCard：                                                    │
-# │    · 商品名 → 点击打开详情弹窗                                              │
-# │    · 迷你曲线 (ECharts SVG)：涨=红色(#ff4d4f), 跌=绿色(#52c41a), 平=灰色  │
-# │    · 最新价格 + 涨跌幅 ↑N / ↓N                                             │
-# │                                                                            │
-# │  详情弹窗 DetailModal：                                                    │
-# │    · 全历史曲线（逐段涨跌色）+ dateZoom 滑块                                 │
-# │    · tooltip 显示 日期 + 价格 + 较上期涨跌                                  │
-# │    · MarkLine 均价/最高/最低                                                │
-# │                                                                            │
-# │  搜索栏 SearchBar：前端模糊匹配，下拉 商品名—品牌                           │
-# │  模板下载：含最新价格，日期=今天，用户自行修改后再上传                      │
+# │  products (200条)        product_aliases (200+)     price_history           │
+# │  ┌──────────────┐       ┌──────────────────┐       ┌──────────────────┐    │
+# │  │ id (PK)      │       │ id (PK)          │       │ id (PK)          │    │
+# │  │ name (UNIQUE)│──┐    │ product_id (FK)  │──┐    │ product_id (FK)  │    │
+# │  │ brand        │  │    │ alias (UNIQUE)   │  │    │ price (FLOAT)    │    │
+# │  │ keywords     │  │    │ sort_order (首选) │  │    │ price_date       │    │
+# │  │ created_at   │  │    │ source           │  │    │ source_name      │    │
+# │  └──────────────┘  │    │                  │  │    │ UNIQUE(prod,date)│    │
+# │                    └────┤ sort_order=0=首选├──┘    └──────────────────┘    │
+# │                         └──────────────────┘                               │
+# │  别名自动生成 + 手动添加 + 用户修正自动学习                                   │
 # └─────────────────────────────────────────────────────────────────────────────┘
 #
 # ┌─────────────────────────────────────────────────────────────────────────────┐
 # │ 【后端文件 — backend/app/】                                                 │
-# │  main.py      FastAPI 入口，7 个路由，预览会话内存缓存                       │
-# │  parser.py    Excel解析 + 日期归一化 + 异常检测(≥20元) + 两阶段合并         │
-# │  storage.py   JSON 文件读写（threading.Lock）+ 旧日期格式自动迁移           │
-# │  models.py    Pydantic 模型（PricePoint, SingleItem, BrandGroup...）       │
 # │                                                                            │
-# │  数据文件 /data/prices.json 结构：                                         │
-# │  { "brands": [                                                             │
-# │      { "brand": "云南", "items": [                                         │
-# │          { "name": "云端之上", "prices": [                                 │
-# │              { "date": "2026-06-21", "price": 1130 }                       │
-# │          ] }                                                               │
-# │      ] }                                                                   │
-# │  ] }                                                                       │
+# │  main.py          FastAPI 入口 + 所有路由 + DeepSeek 调用                    │
+# │  database.py      SQLite ORM (SQLAlchemy 2.x) + 事务上下文                  │
+# │  parser.py        Excel 解析 + 日期归一化(MMDD/YYMMDD→ISO) + Upsert合并      │
+# │  matcher.py       4层匹配引擎: 精确→别名→关键词→RapidFuzz                    │
+# │  text_parser.py   粘贴文本解析(去噪音/提取价格/品牌行)                        │
+# │  migration.py     JSON→SQLite 迁移 + 自动种子                                │
+# │  seed_products.py 标准商品库导入 + 别名自动生成                              │
+# │  storage.py       JSON持久化(旧版兼容)                                       │
+# │  models.py        Pydantic 模型                                              │
+# │                                                                            │
+# │  API调用DeepSeek: prompt含全部首选别名(200条) + max_tokens=16384             │
 # └─────────────────────────────────────────────────────────────────────────────┘
 #
 # ┌─────────────────────────────────────────────────────────────────────────────┐
-# │ 【前端文件 — frontend/src/】                                                │
-# │  App.jsx               入口：Header（上传/模板下载）+ 整合 PriceReviewModal  │
-# │  SearchBar.jsx         搜索框 AutoComplete 前端模糊匹配                     │
-# │  DashboardGrid.jsx     品牌 Card 列表 + 8列商品网格                         │
-# │  ItemCard.jsx          商品卡片：迷你曲线+涨跌色+最新价格                    │
-# │  DetailModal.jsx       详情弹窗：全历史曲线+涨跌色+dataZoom+统计            │
-# │  PriceReviewModal.jsx  上传核对弹窗：异常价格列表/修改/还原/跳过            │
-# │  store/priceStore.js   Zustand 状态管理：previewUpload/confirmUpload       │
-# │  main.jsx              React 入口                                          │
+# │ 【前端组件 — frontend/src/components/】                                      │
 # │                                                                            │
-# │  构建: cd frontend && npm run build → dist/ → Docker 复制到 app/static     │
+# │  布局：左侧菜单栏(180px) + 右侧内容区                                       │
+# │  <768px 时侧栏自动隐藏，切换为汉堡菜单☰                                     │
+# │                                                                            │
+# │  ┌──────────────────────────────────────────────────────┐                  │
+# │  │ 📊 价格追踪                                               │                  │
+# │  │ ├─ 价格看板（Dashboard + 8列网格 + 响应式自动缩减）        │                  │
+# │  │ ├─ Excel上传（原上传核对流程）                           │                  │
+# │  │ ├─ 粘贴上传（引擎匹配 → ReviewPanel）                    │                  │
+# │  │ ├─ AI 匹配（DeepSeek → ReviewPanel）                    │                  │
+# │  │ └─ 别名管理（标准名/别名 编辑/拖拽排序/删除）             │                  │
+# │  └──────────────────────────────────────────────────────┘                  │
+# │                                                                            │
+# │  ReviewPanel（共享导入模块）：                                              │
+# │    PasteReviewModal 和 AIMatcher 共用，提供：                                │
+# │    · 品牌输入框（搜索自动补全）                                              │
+# │    · 商品名输入框（搜索已有 + 回车输入新品）                                  │
+# │    · 价格编辑 + 相邻价格偏差 ≥20元提示                                       │
+# │    · 每行唯一 _rid，删除不再卡顿                                              │
+# │    · 新品自动创建(无matched_id但有name → 后端自动products+aliases)           │
+# │    · 日期前置选择(解析前选日期，用于相邻价格比对)                             │
+# │                                                                            │
+# │  其他组件：                                                                 │
+# │    ItemCard       商品卡片(迷你SVG曲线+涨跌色+最新日期价格)                   │
+# │    DashboardGrid  品牌列表+8列网格(响应式)                                   │
+# │    DetailModal    详情弹窗(全历史曲线+价格可编辑列表)                         │
+# │    SearchBar      搜索(前端模糊匹配)                                         │
+# │    PriceReviewModal Excel上传核对                                            │
+# │    BackupRestoreModal 备份还原(DB文件)                                       │
+# │    AliasManager   别名管理(拖拽编辑删除)                                     │
+# │                                                                            │
+# │  图表渲染：ECharts SVG（非Canvas）— 低内存适配群晖                            │
+# └─────────────────────────────────────────────────────────────────────────────┘
+#
+# ┌─────────────────────────────────────────────────────────────────────────────┐
+# │ 【Excel 上传格式】                                                          │
+# │  Row 1:  日期 → YYYY-MM-DD ISO（支持 0621 / 260621 / 20260621）             │
+# │  Row 2+: 品牌行(col A=名,col B=空) → 商品行(col A=名,col B=价格)            │
+# │  价格=0或空 → 无报价，图表断点                                               │
+# │  品牌识别：仅基于 KNOWN_BRANDS 硬编码列表(不学历史)                          │
+# │  KNOWN_BRANDS = 云南/浙江/上海/湖北/湖南/河南/河北/广西                      │
+# │                  江苏/内蒙/山东/江西/贵州/四川/福建/吉林                      │
+# │                  广东/安徽/陕西/重庆/甘肃/哈尔滨/公司进口                    │
+# └─────────────────────────────────────────────────────────────────────────────┘
+#
+# ┌─────────────────────────────────────────────────────────────────────────────┐
+# │ 【数据合并策略 — Upsert】                                                    │
+# │  ① 新商品 → 追加到品牌末尾                                                  │
+# │  ② 旧商品 → 更新该日期价格/新增日期                                         │
+# │  ③ 历史品牌未出现 → 完整保留                                                │
+# │  ④ 历史商品未出现 → 保留全部历史价格                                         │
+# │  ⑤ 相同(商品+日期) → 更新价格不重复创建                                       │
+# │  ⑥ 新品创建 → 自动写入 products + product_aliases                           │
+# │  ⑦ WAL模式 + threading.Lock 防并发写入损坏                                   │
 # └─────────────────────────────────────────────────────────────────────────────┘
 #
 # ┌─────────────────────────────────────────────────────────────────────────────┐
 # │ 【构建与部署】                                                               │
-# │  Dockerfile: 单阶段（python:3.11-slim），前端预编译无 node 依赖             │
-# │    COPY backend/requirements.txt .  &&  pip install                        │
-# │    COPY backend/app/ ./app/                                                │
-# │    COPY frontend/dist ./static                                             │
-# │    CMD uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1        │
+# │  Dockerfile: 单阶段(python:3.11-slim)，前端预编译无node依赖                  │
+# │    COPY backend/requirements.txt && pip install                              │
+# │    COPY backend/app/ ./app/ && COPY backend/price_template.xlsx .            │
+# │    COPY frontend/dist ./static                                               │
+# │    CMD uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1          │
 # │                                                                            │
-# │  Mac 本地构建测试：                                                          │
-# │    cd frontend && npm run build                                            │
-# │    cp -r dist ../backend/static                                            │
-# │    cd ../backend && DATA_DIR=/tmp/data uvicorn app.main:app               │
+# │  Mac 本地测试：                                                              │
+# │    cd frontend && npm run build && rm -rf ../backend/static &&               │
+# │    cp -r dist/* ../backend/static/ &&                                        │
+# │    cd ../backend && DATA_DIR=/tmp/data uvicorn app.main:app                 │
 # │                                                                            │
-# │  群晖部署（SSH 密码 REDACTED）：                                             │
-# │    tar czf /tmp/p.tar.gz Dockerfile docker-compose.yml backend/             │
-# │        frontend/dist frontend/package.json                                 │
-# │        --exclude=node_modules --exclude=__pycache__ --exclude='._*'        │
-# │    ssh REDACTED@NAS_HOST                                              │
-# │      "cd /volume1/docker/price-tracker &&                                    │
-# │       rm -rf ./* && tar xzf - -C . &&                                        │
-# │       (mkdir -p data data/backups)                                            │
-# │    ssh REDACTED@NAS_HOST                                              │
-# │      "cd /volume1/docker/price-tracker &&                                  │
-# │       echo 'REDACTED' | sudo -S                                            │
-# │       /usr/local/bin/docker compose up -d --build"                         │
-# │  (群晖 sudo 必须 + docker 在 /usr/local/bin)                               │
+# │  ⚠️【群晖部署 —— 安全流程，严禁 rm -rf ./* 或 find . -delete】               │
+# │  数据卷挂在部署目录内（./data:/data），任何"清空目录再解包"的写法都会       │
+# │  连数据库一起删掉。正确做法是「停容器 → 备份 → 只删构建产物 → tar 覆盖」。  │
+# │                                                                            │
+# │  1) 本地打包（确认不含 data/）：                                             │
+# │     cd frontend && npm run build && cd ..                                   │
+# │     tar czf /tmp/p.tar.gz Dockerfile docker-compose.yml                     │
+# │         backend/requirements.txt backend/price_template.xlsx                │
+# │         backend/app frontend/dist frontend/package.json                     │
+# │         --exclude=node_modules --exclude=__pycache__ --exclude='._*'        │
+# │                                                                            │
+# │  2) 停容器 + 备份（凭据从环境变量取，不要写进仓库）：                        │
+# │     cd /volume1/docker/price-tracker                                        │
+# │     echo "$NAS_PW" | sudo -S /usr/local/bin/docker compose stop             │
+# │     cp -a data/prices.db data/backups/predeploy_$(date +%Y%m%d_%H%M%S).db   │
+# │     sudo tar czf /volume1/docker/pt-predeploy-<TS>.tar.gz \                 │
+# │         -C /volume1/docker price-tracker                                    │
+# │                                                                            │
+# │  3) 上传 + 只覆盖代码：                                                      │
+# │     ls -la data/prices.db      # 记下大小                                  │
+# │     rm -rf frontend/dist       # 只删构建产物，data/ 一个字都不动            │
+# │     tar xzf /tmp/p.tar.gz -C .                                              │
+# │     ls -la data/prices.db      # 必须与上面完全一致                        │
+# │                                                                            │
+# │  4) 重建 + 校验：                                                            │
+# │     echo "$NAS_PW" | sudo -S /usr/local/bin/docker compose                  │
+# │       up -d --build                                                         │
+# │     docker exec price-tracker-app-1 md5sum /app/app/main.py  # 与本地比对   │
+# │                                                                            │
+# │  （群晖 sudo 必须带密码 + docker 在 /usr/local/bin）                         │
+# │  回滚：cd /volume1/docker && sudo tar xzf pt-predeploy-<TS>.tar.gz          │
 # └─────────────────────────────────────────────────────────────────────────────┘
 #
 # ┌─────────────────────────────────────────────────────────────────────────────┐
 # │ 【版本记录】                                                                 │
 # │  v1 2026-06-21  初始 单容器+JSON+37列                                      │
 # │  v2 2026-06-21  日期归一化/品牌识别修复/上传按钮简化/8列/涨跌色/模板下载     │
-# │  v3 2026-06-21  两阶段上传(预览→核对→确认)/PriceReviewModal(偏差≥20元)     │
-# │                  模板日期改今天/yml架构文档完善                              │
+# │  v3 2026-06-21  两阶段上传/PriceReviewModal/SQLite迁移/匹配引擎/别名管理    │
+# │  v3.1     --    ReviewPanel共享/AI匹配弹窗化/架构重构                        │
+# │  v3.2     --    新品自动创建/手机响应式/详情价格编辑/相邻价格偏差检测         │
+# │  v3.3     --    商品排序/地区排序/别名拖拽排序(箭头+拖拽双模式)               │
+# │  v4.0 2026-10-02 别名管理升级为商品管理(列表布局)；新增进货价管理与历史记录   │
+# │                  (product_cost 表 + current_cost 冗余字段 + 当前倒挂计算)；   │
+# │                  Excel 批量导入进货价；三层排序(地区/商品/别名)全部保留；     │
+# │                  价格看板卡片显示公司价与盈亏(倒挂绿/盈利红)；               │
+# │                  AI 分析模块(ai_analysis.py：导出内嵌提示词 / 粘贴导入容错   │
+# │                  解析 / 时间线 / 数据墙 / 聚合接口 / 指纹幂等)；             │
+# │                  ai_analysis 三个 VIRTUAL 生成列 + 索引；                    │
+# │                  全站深色驾驶舱(theme.js token 化，禁写字面色值)             │
 # └─────────────────────────────────────────────────────────────────────────────┘
 #
 # ════════════════════════════════════════════════════════════════════════════════

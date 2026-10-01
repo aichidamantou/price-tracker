@@ -5,6 +5,8 @@ import * as echarts from 'echarts/core'
 import { LineChart } from 'echarts/charts'
 import { GridComponent, TooltipComponent, DataZoomComponent, VisualMapComponent } from 'echarts/components'
 import { SVGRenderer } from 'echarts/renderers'
+import { T } from '../utils/theme'
+import { STATUS_COLOR } from '../utils/priceStatus'
 
 echarts.use([LineChart, GridComponent, TooltipComponent, DataZoomComponent, VisualMapComponent, SVGRenderer])
 
@@ -78,15 +80,15 @@ export default function DetailModal({ item, brands, onClose }) {
         const val = Array.isArray(p.data) ? p.data[1] : p.value; let extra = ''
         if (fullData) { const idx = fullData.dates.indexOf(p.name)
           if (idx > 0) { const c = fullData.changes[idx]; const a = c > 0 ? '↑' : (c < 0 ? '↓' : '→')
-            const co = c > 0 ? '#ff4d4f' : (c < 0 ? '#52c41a' : '#999')
+            const co = c > 0 ? STATUS_COLOR.up : (c < 0 ? STATUS_COLOR.down : T.textDim)
             extra = ` <span style="color:${co};font-size:10px">${a}${c !== 0 ? Math.abs(c) : ''}</span>` }
         }
-        return `${label} <span style="color:#1677ff;font-weight:600">${val}</span>${extra}`
+        return `${label} <span style="color:${T.primary};font-weight:600">${val}</span>${extra}`
       }, confine: true },
       grid: { left: 60, right: 20, top: 20, bottom: 50 },
       xAxis: { type: 'category', data: fullData.dates, axisLabel: { rotate: 45, fontSize: 11 } },
       yAxis: { type: 'value', min: minVal - pad, max: maxVal + pad, axisLabel: { formatter: '¥{value}' } },
-      visualMap: { show: false, dimension: 2, pieces: [{ value: -1, color: '#52c41a' }, { value: 0, color: '#d9d9d9' }, { value: 1, color: '#ff4d4f' }], outOfRange: { color: '#d9d9d9' } },
+      visualMap: { show: false, dimension: 2, pieces: [{ value: -1, color: STATUS_COLOR.down }, { value: 0, color: T.textDim }, { value: 1, color: STATUS_COLOR.up }], outOfRange: { color: T.textDim } },
       dataZoom: [{ type: 'inside', start: 0, end: 100 }, { type: 'slider', start: 0, end: 100, height: 24, bottom: 10 }],
       series: [{ type: 'line', data: dataWithDir, smooth: true, symbol: 'circle', symbolSize: 5, lineStyle: { width: 2 } }],
     }
@@ -98,7 +100,7 @@ export default function DetailModal({ item, brands, onClose }) {
     const max = Math.max(...vals); const min = Math.min(...vals)
     const last = vals[vals.length-1]; const prev = vals.length >= 2 ? vals[vals.length-2] : null
     const ct = prev !== null ? (last > prev ? `↑${last-prev}` : last < prev ? `↓${Math.abs(last-prev)}` : '') : ''
-    const cc = prev !== null ? (last > prev ? '#ff4d4f' : last < prev ? '#52c41a' : '#999') : '#999'
+    const cc = prev !== null ? (last > prev ? STATUS_COLOR.up : last < prev ? STATUS_COLOR.down : T.textDim) : T.textDim
     return { avg, max, min, last, prev, changeText: ct, changeColor: cc }
   }, [fullData])
 
@@ -108,7 +110,7 @@ export default function DetailModal({ item, brands, onClose }) {
       footer={null} width={700} destroyOnClose>
       {fullData && fullData.prices.length > 0 ? (
         <>
-          <div style={{ marginBottom: 12, color:'#666', fontSize:13 }}>
+          <div style={{ marginBottom: 12, color: T.textSub, fontSize:13 }}>
             共 <strong>{fullData.prices.length}</strong> 个报价记录
             {stats && <span>，最新 <strong style={{color:stats.changeColor}}>¥{stats.last}</strong>
               {stats.prev !== null && <span style={{color:stats.changeColor, fontSize:12, marginLeft:4}}>{stats.changeText}</span>}
@@ -116,16 +118,16 @@ export default function DetailModal({ item, brands, onClose }) {
           </div>
           <ReactEChartsCore key={chartKey} echarts={echarts} option={option}
             style={{height:300, width:'100%'}} notMerge lazyUpdate />
-          <div style={{marginTop:8, fontSize:12, color:'#666'}}>点击右侧「修改」编辑价格：</div>
-          <div style={{marginTop:4, border:'1px solid #f0f0f0', borderRadius:6, maxHeight:200, overflowY:'auto'}}>
-            <div style={{display:'flex', padding:'6px 12px', background:'#fafafa', fontSize:12, fontWeight:600, borderBottom:'1px solid #f0f0f0'}}>
+          <div style={{marginTop:8, fontSize:12, color: T.textSub}}>点击右侧「修改」编辑价格：</div>
+          <div style={{marginTop:4, border:`1px solid ${T.borderSoft}`, borderRadius:6, maxHeight:200, overflowY:'auto'}}>
+            <div style={{display:'flex', padding:'6px 12px', background: T.subtle, fontSize:12, fontWeight:600, borderBottom:`1px solid ${T.borderSoft}`}}>
               <div style={{width:100}}>日期</div>
               <div style={{width:100, textAlign:'right'}}>价格</div>
               <div style={{flex:1, textAlign:'right'}}>操作</div>
             </div>
             {[...fullData.prices].reverse().map(p => (
-              <div key={p.date} style={{display:'flex', alignItems:'center', padding:'6px 12px', fontSize:12, borderBottom:'1px solid #f5f5f5',
-                background: editing?.date === p.date ? '#fffbe6' : 'transparent'}}>
+              <div key={p.date} style={{display:'flex', alignItems:'center', padding:'6px 12px', fontSize:12, borderBottom:`1px solid ${T.borderFaint}`,
+                background: editing?.date === p.date ? T.warnBg : 'transparent'}}>
                 <div style={{width:100}}>{p.date}</div>
                 {editing?.date === p.date ? (
                   <>
@@ -133,17 +135,17 @@ export default function DetailModal({ item, brands, onClose }) {
                       min={0} style={{width:100}} formatter={v=>`¥${v}`} parser={v=>v.replace(/[^0-9.]/g,'')} />
                     <div style={{flex:1, textAlign:'right', display:'flex', gap:4, justifyContent:'flex-end'}}>
                       <button onClick={() => handleSave(p.date, editVal)}
-                        style={{padding:'2px 10px', background:'#1677ff', color:'#fff', border:'none', borderRadius:3, cursor:'pointer', fontSize:11}}>保存</button>
+                        style={{padding:'2px 10px', background: T.primary, color: T.page, border:'none', borderRadius:3, cursor:'pointer', fontSize:11}}>保存</button>
                       <button onClick={() => setEditing(null)}
-                        style={{padding:'2px 10px', background:'#f5f5f5', border:'1px solid #d9d9d9', borderRadius:3, cursor:'pointer', fontSize:11}}>取消</button>
+                        style={{padding:'2px 10px', background: T.subtle, border:`1px solid ${T.borderSoft}`, color: T.text, borderRadius:3, cursor:'pointer', fontSize:11}}>取消</button>
                     </div>
                   </>
                 ) : (
                   <>
-                    <div style={{width:100, textAlign:'right', fontWeight:600, color:'#1677ff'}}>¥{p.price}</div>
+                    <div style={{width:100, textAlign:'right', fontWeight:600, color: T.primary}}>¥{p.price}</div>
                     <div style={{flex:1, textAlign:'right'}}>
                       <button onClick={() => { setEditing(p); setEditVal(p.price) }}
-                        style={{padding:'2px 10px', background:'transparent', border:'1px solid #1677ff', color:'#1677ff', borderRadius:3, cursor:'pointer', fontSize:11}}>修改</button>
+                        style={{padding:'2px 10px', background:'transparent', border:`1px solid ${T.primary}`, color: T.primary, borderRadius:3, cursor:'pointer', fontSize:11}}>修改</button>
                     </div>
                   </>
                 )}
@@ -152,7 +154,7 @@ export default function DetailModal({ item, brands, onClose }) {
           </div>
         </>
       ) : (
-        <div style={{padding:40, textAlign:'center', color:'#999'}}>暂无报价数据</div>
+        <div style={{padding:40, textAlign:'center', color: T.textDim}}>暂无报价数据</div>
       )}
     </Modal>
   )

@@ -1,5 +1,6 @@
 import os
 import io
+import re
 import tempfile
 import uuid
 import shutil
@@ -17,12 +18,20 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from .storage import load_all, save_all
-from .parser import parse_upload, confirm_upload as json_confirm_upload
-from .database import db_session, Product, PriceHistory, ProductAlias, BrandOrder, upsert_price, get_product_id, get_product_name
+from .parser import parse_upload, confirm_upload as json_confirm_upload, normalize_date
+from .database import (
+    db_session, Product, PriceHistory, ProductAlias, ProductCost, BrandOrder,
+    upsert_price, get_product_id, get_product_name,
+    upsert_cost, recalc_current_cost, get_cost_at_date,
+)
 from .migration import migrate_if_needed
 from sqlalchemy import text as sa_text, func
 
 app = FastAPI(title="Price Tracker")
+
+# AI 分析模块（数据导出 + AI 结果导入 + 时间线管理）
+from .ai_analysis import router as ai_router  # noqa: E402
+app.include_router(ai_router)
 
 app.add_middleware(
     CORSMiddleware,
@@ -72,6 +81,10 @@ def _db_to_brand_groups():
             prices = [{"date": r.price_date, "price": r.price} for r in records]
             brands_map[prod.brand or "未知"].append({
                 "name": prod.name,
+                "product_id": prod.id,
+                # 公司价（烟草公司进货价）—— 卡片名称右侧展示 + 倒挂/盈利计算
+                "cost": prod.current_cost,
+                "cost_effective_from": prod.cost_effective_from,
                 "prices": prices,
             })
     # Sort brands: by brand_order.sort_order if set, else alphabetical
@@ -595,9 +608,37 @@ async def paste_confirm(data: dict = {}):
 
 # ── 别名管理 API ─────────────────────────────────────────
 
+def _detect_inversion(cost, current_price):
+    """倒挂检测：进货价 > 售价即倒挂。
+
+    倒挂幅度 = 进货价 - 售价；倒挂比例 = 幅度 / 进货价。
+    level: critical(>5%) / warning(>0) / ok(<=0)
+    """
+    if cost is None:
+        return {"status": "no_cost", "level": "unknown"}
+    if current_price is None:
+        return {"status": "no_price", "level": "unknown", "cost_price": cost}
+    amount = round(cost - current_price, 2)
+    pct = round(amount / cost * 100, 2) if cost else 0.0
+    if pct > 5:
+        level = "critical"
+    elif pct > 0:
+        level = "warning"
+    else:
+        level = "ok"
+    return {
+        "status": "ok",
+        "cost_price": cost,
+        "current_price": current_price,
+        "inverted_amount": amount,
+        "inverted_pct": pct,
+        "level": level,
+    }
+
+
 @app.get("/api/aliases/manage")
 def list_aliases_manage():
-    """列出所有标准商品及其别名（按 sort_order）。"""
+    """列出所有标准商品及其别名、进货价（按 brand_order / sort_order）。"""
     from .database import db_session, Product, ProductAlias
     result = []
     with db_session() as s:
@@ -609,14 +650,26 @@ def list_aliases_manage():
         for prod in products:
             aliases = s.query(ProductAlias).filter(
                 ProductAlias.product_id == prod.id
-            ).order_by(ProductAlias.sort_order).all()
+            ).order_by(ProductAlias.sort_order, ProductAlias.id).all()
             alias_list = [{"id": a.id, "alias": a.alias, "source": a.source,
                           "sort_order": a.sort_order} for a in aliases]
+            # 最新有效报价 —— 供当前倒挂计算
+            latest = s.query(PriceHistory).filter(
+                PriceHistory.product_id == prod.id,
+                PriceHistory.price.isnot(None),
+            ).order_by(PriceHistory.price_date.desc()).first()
+            current_price = latest.price if latest else None
             result.append({
                 "product_id": prod.id,
                 "name": prod.name,
                 "brand": prod.brand or "",
+                "sort_order": prod.sort_order or 0,
                 "aliases": alias_list,
+                "current_cost": prod.current_cost,
+                "cost_effective_from": prod.cost_effective_from,
+                "current_price": current_price,
+                "current_price_date": latest.price_date if latest else None,
+                "inversion": _detect_inversion(prod.current_cost, current_price),
             })
     # Sort result by brand_order
     def _brand_key(item):
@@ -804,6 +857,7 @@ async def delete_product(product_id: int):
         deleted_name = prod.name
         s.query(PriceHistory).filter(PriceHistory.product_id == product_id).delete()
         s.query(ProductAlias).filter(ProductAlias.product_id == product_id).delete()
+        s.query(ProductCost).filter(ProductCost.product_id == product_id).delete()
         s.delete(prod)
 
     # 同步删除旧版 JSON 存储中的同名商品，防止下次上传时被 carry-over 复活
@@ -858,6 +912,422 @@ def get_brand_order():
     with db_session() as s:
         orders = s.query(BrandOrder).order_by(BrandOrder.sort_order).all()
         return {"brands": [o.brand for o in orders]}
+
+
+# ═══════════════════════════════════════════════════════════
+# 进货价管理 API
+# ═══════════════════════════════════════════════════════════
+
+def _today_str() -> str:
+    return now_bj().strftime("%Y-%m-%d")
+
+
+def _parse_cost_date(raw):
+    """进货价生效日期归一化。
+
+    返回 (date_str, error)。空值 → 今天（日常改价不填日期）。
+    兼容 Excel 日期单元格 / 2025-12-01 / 20251201 / 251201 / 1201。
+    """
+    if raw is None or (isinstance(raw, str) and not raw.strip()):
+        return _today_str(), None
+    if hasattr(raw, "strftime"):  # openpyxl 读出的 datetime
+        return raw.strftime("%Y-%m-%d"), None
+    s = str(raw).strip()
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", s):
+        return s, None
+    d = normalize_date(s)
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", d or ""):
+        return None, f"无法识别日期 {s!r}"
+    return d, None
+
+
+def _coerce_price(raw):
+    """→ (price, error)。"""
+    if raw is None or (isinstance(raw, str) and not raw.strip()):
+        return None, "缺少进货价"
+    try:
+        price = float(raw)
+    except (TypeError, ValueError):
+        return None, "进货价必须是数字"
+    if price < 0:
+        return None, "进货价不能为负数"
+    return price, None
+
+
+def _fmt_dt(v) -> str:
+    if v is None:
+        return ""
+    if hasattr(v, "strftime"):
+        return v.strftime("%Y-%m-%d %H:%M:%S")
+    return str(v)
+
+
+def _cost_row_json(r) -> dict:
+    return {
+        "id": r.id,
+        "product_id": r.product_id,
+        "cost_price": r.cost_price,
+        "effective_from": r.effective_from,
+        "note": r.note or "",
+        "created_at": _fmt_dt(r.created_at),
+    }
+
+
+@app.patch("/api/products/{product_id}/cost")
+async def update_product_cost(product_id: int, data: dict = {}):
+    """更新当前进货价。
+
+    用户只填价格，系统自动以今天为生效日期写入历史表（同日覆盖），
+    并同步 products 的冗余字段。
+    """
+    price, err = _coerce_price(data.get("cost_price"))
+    if err:
+        return JSONResponse(status_code=400, content={"error": err})
+    effective, derr = _parse_cost_date(data.get("effective_from"))
+    if derr:
+        return JSONResponse(status_code=400, content={"error": derr})
+    note = (data.get("note") or "手动更新").strip()
+    with db_session() as s:
+        prod = s.query(Product).filter(Product.id == product_id).first()
+        if not prod:
+            return JSONResponse(status_code=404, content={"error": "商品不存在"})
+        upsert_cost(s, product_id, price, effective, note)
+        return {
+            "status": "ok",
+            "product_id": product_id,
+            "current_cost": prod.current_cost,
+            "cost_effective_from": prod.cost_effective_from,
+        }
+
+
+@app.get("/api/products/{product_id}/cost/history")
+def get_cost_history(product_id: int):
+    """某商品的进货价历史（effective_from DESC）。"""
+    with db_session() as s:
+        rows = s.query(ProductCost).filter(
+            ProductCost.product_id == product_id
+        ).order_by(ProductCost.effective_from.desc(), ProductCost.id.desc()).all()
+        return {"product_id": product_id, "history": [_cost_row_json(r) for r in rows]}
+
+
+@app.post("/api/products/{product_id}/cost/history")
+async def add_cost_history(product_id: int, data: dict = {}):
+    """手动补录历史进货价。
+
+    该日期已有记录时：默认返回 409（不静默覆盖），前端确认后传 overwrite=true 再写。
+    """
+    price, err = _coerce_price(data.get("cost_price"))
+    if err:
+        return JSONResponse(status_code=400, content={"error": err})
+    effective, derr = _parse_cost_date(data.get("effective_from"))
+    if derr:
+        return JSONResponse(status_code=400, content={"error": derr})
+    if effective == _today_str() and not data.get("effective_from"):
+        return JSONResponse(status_code=400, content={"error": "补录需要填写生效日期"})
+    note = (data.get("note") or "补录").strip()
+    # 默认不覆盖：避免调用方未显式确认就冲掉已有历史
+    overwrite = bool(data.get("overwrite", False))
+    with db_session() as s:
+        prod = s.query(Product).filter(Product.id == product_id).first()
+        if not prod:
+            return JSONResponse(status_code=404, content={"error": "商品不存在"})
+        existing = s.query(ProductCost).filter(
+            ProductCost.product_id == product_id,
+            ProductCost.effective_from == effective,
+        ).first()
+        if existing and not overwrite:
+            return JSONResponse(status_code=409, content={
+                "error": f"{effective} 已有进货价 {existing.cost_price}，是否覆盖？",
+                "existing": _cost_row_json(existing),
+            })
+        upsert_cost(s, product_id, price, effective, note)
+        return {
+            "status": "ok",
+            "product_id": product_id,
+            "current_cost": prod.current_cost,
+            "cost_effective_from": prod.cost_effective_from,
+        }
+
+
+@app.patch("/api/products/cost/history/{cost_id}")
+async def update_cost_history(cost_id: int, data: dict = {}):
+    """修改一条进货价历史（价格 / 生效日期 / 备注）。
+
+    改日期撞到同商品另一条记录时：默认 409，传 overwrite=true 则合并（删掉冲突那条）。
+    """
+    with db_session() as s:
+        row = s.query(ProductCost).filter(ProductCost.id == cost_id).first()
+        if not row:
+            return JSONResponse(status_code=404, content={"error": "记录不存在"})
+        pid = row.product_id
+
+        if "cost_price" in data:
+            price, perr = _coerce_price(data.get("cost_price"))
+            if perr:
+                return JSONResponse(status_code=400, content={"error": perr})
+        else:
+            price = row.cost_price
+
+        if "effective_from" in data:
+            raw_date = data.get("effective_from")
+            if raw_date is None or (isinstance(raw_date, str) and not raw_date.strip()):
+                return JSONResponse(status_code=400, content={"error": "请填写生效日期"})
+            effective, derr = _parse_cost_date(raw_date)
+            if derr:
+                return JSONResponse(status_code=400, content={"error": derr})
+        else:
+            effective = row.effective_from
+
+        if "note" in data:
+            note = str(data.get("note") or "").strip()
+        else:
+            note = row.note or ""
+
+        conflict = s.query(ProductCost).filter(
+            ProductCost.product_id == pid,
+            ProductCost.effective_from == effective,
+            ProductCost.id != cost_id,
+        ).first()
+        if conflict:
+            if not bool(data.get("overwrite", False)):
+                return JSONResponse(status_code=409, content={
+                    "error": f"{effective} 已有进货价 {conflict.cost_price}",
+                    "conflict_id": conflict.id,
+                    "conflict": _cost_row_json(conflict),
+                })
+            s.delete(conflict)
+            s.flush()
+
+        row.cost_price = price
+        row.effective_from = effective
+        row.note = note
+        s.flush()
+        recalc_current_cost(s, pid)
+        prod = s.query(Product).filter(Product.id == pid).first()
+        return {
+            "status": "ok",
+            "record": _cost_row_json(row),
+            "product_id": pid,
+            "current_cost": prod.current_cost if prod else None,
+            "cost_effective_from": prod.cost_effective_from if prod else None,
+        }
+
+
+@app.delete("/api/products/cost/history/{cost_id}")
+async def delete_cost_history(cost_id: int):
+    """删除一条进货价历史，并重算当前进货价（取剩余最新；无则置空）。"""
+    with db_session() as s:
+        row = s.query(ProductCost).filter(ProductCost.id == cost_id).first()
+        if not row:
+            return JSONResponse(status_code=404, content={"error": "记录不存在"})
+        pid = row.product_id
+        s.delete(row)
+        s.flush()
+        recalc_current_cost(s, pid)
+        prod = s.query(Product).filter(Product.id == pid).first()
+        return {
+            "status": "ok",
+            "product_id": pid,
+            "current_cost": prod.current_cost if prod else None,
+            "cost_effective_from": prod.cost_effective_from if prod else None,
+        }
+
+
+@app.post("/api/products")
+async def create_product(data: dict = {}):
+    """新增标准商品（可顺带录入进货价）。"""
+    name = (data.get("name") or "").strip()
+    brand = (data.get("brand") or "").strip()
+    if not name:
+        return JSONResponse(status_code=400, content={"error": "缺少商品名"})
+    if not brand:
+        return JSONResponse(status_code=400, content={"error": "缺少品牌"})
+    with db_session() as s:
+        if s.query(Product).filter(Product.name == name).first():
+            return JSONResponse(status_code=400, content={"error": "商品名已存在"})
+        max_order = s.query(func.max(Product.sort_order)).filter(
+            Product.brand == brand
+        ).scalar()
+        prod = Product(
+            name=name, brand=brand,
+            sort_order=(max_order + 1) if max_order is not None else 0,
+        )
+        s.add(prod)
+        s.flush()
+        pid = prod.id
+        cost, _err = _coerce_price(data.get("cost_price"))
+        if cost is not None:
+            upsert_cost(s, pid, cost, _today_str(), "手动更新")
+    return {"status": "ok", "product_id": pid, "name": name, "brand": brand}
+
+
+@app.post("/api/products/cost/import")
+async def import_cost_excel(file: UploadFile = File(...)):
+    """Excel 批量导入进货价。
+
+    列：A=标准商品名（或别名）, B=进货价, C=生效日期(可选，留空=今天)
+    """
+    if not file.filename.endswith((".xlsx", ".xls")):
+        return JSONResponse(status_code=400, content={"error": "仅支持 .xlsx / .xls"})
+    suffix = Path(file.filename).suffix
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+        tmp.write(await file.read())
+        tmp_path = tmp.name
+    try:
+        import openpyxl
+        wb = openpyxl.load_workbook(tmp_path, data_only=True)
+        ws = wb.active
+        rows = list(ws.iter_rows(min_row=1, max_col=3, values_only=True))
+
+        success = 0
+        failed: list[str] = []
+        skipped: list[str] = []
+
+        with db_session() as s:
+            name_map = {p.name: p.id for p in s.query(Product).all()}
+            alias_map = {a.alias: a.product_id for a in s.query(ProductAlias).all()}
+
+            for idx, row in enumerate(rows):
+                if not row or row[0] is None:
+                    continue
+                raw_name = str(row[0]).strip()
+                if not raw_name:
+                    continue
+                raw_price = row[1] if len(row) > 1 else None
+                # 跳过表头行
+                if idx == 0 and (
+                    raw_name in ("标准商品名", "商品名", "商品", "名称", "标准名")
+                    or not isinstance(raw_price, (int, float))
+                ):
+                    continue
+                if raw_price is None or (isinstance(raw_price, str) and not raw_price.strip()):
+                    skipped.append(raw_name)
+                    continue
+                price, perr = _coerce_price(raw_price)
+                if perr:
+                    failed.append(f"{raw_name}（{perr}）")
+                    continue
+                pid = name_map.get(raw_name) or alias_map.get(raw_name)
+                if not pid:
+                    failed.append(raw_name)
+                    continue
+                effective, derr = _parse_cost_date(row[2] if len(row) > 2 else None)
+                if derr:
+                    failed.append(f"{raw_name}（{derr}）")
+                    continue
+                upsert_cost(s, pid, price, effective, "Excel导入")
+                success += 1
+
+        return {
+            "status": "ok",
+            "success_count": success,
+            "failed": failed,
+            "skipped": skipped,
+            "total": success + len(failed),
+        }
+    finally:
+        os.unlink(tmp_path)
+
+
+@app.get("/api/products/cost/template")
+def download_cost_template():
+    """下载进货价导入模板（预填全部标准商品名 + 当前进货价）。"""
+    import openpyxl
+    from openpyxl.styles import PatternFill, Font
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "进货价"
+    headers = ["标准商品名", "进货价", "生效日期(可选)"]
+    fill = PatternFill(start_color="E6F0FF", end_color="E6F0FF", fill_type="solid")
+    for i, h in enumerate(headers, start=1):
+        cell = ws.cell(row=1, column=i, value=h)
+        cell.font = Font(bold=True, color="1677FF")
+        cell.fill = fill
+
+    with db_session() as s:
+        brand_order_map = {bo.brand: bo.sort_order for bo in s.query(BrandOrder).all()}
+        products = s.query(Product).order_by(Product.sort_order, Product.id).all()
+        rows = [(p.brand or "", p.name, p.current_cost) for p in products]
+
+    def _brand_key(r):
+        bo = brand_order_map.get(r[0])
+        return (0, bo) if bo is not None else (1, r[0])
+
+    row_num = 2
+    for _brand, name, cost in sorted(rows, key=_brand_key):
+        ws.cell(row=row_num, column=1, value=name)
+        if cost is not None:
+            ws.cell(row=row_num, column=2, value=cost)
+        row_num += 1
+
+    ws.column_dimensions['A'].width = 28
+    ws.column_dimensions['B'].width = 12
+    ws.column_dimensions['C'].width = 16
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    date_str = now_bj().strftime("%Y%m%d")
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename=cost_template_{date_str}.xlsx"},
+    )
+
+
+@app.get("/api/export/analysis")
+def export_analysis():
+    """AI 分析用导出 —— 格式已冻结，后续只填充值不改结构。"""
+    products_out = []
+    with db_session() as s:
+        brand_order_map = {bo.brand: bo.sort_order for bo in s.query(BrandOrder).all()}
+        products = s.query(Product).order_by(Product.sort_order, Product.id).all()
+        for prod in products:
+            aliases = s.query(ProductAlias).filter(
+                ProductAlias.product_id == prod.id
+            ).order_by(ProductAlias.sort_order, ProductAlias.id).all()
+            records = s.query(PriceHistory).filter(
+                PriceHistory.product_id == prod.id
+            ).order_by(PriceHistory.price_date).all()
+            history = [
+                {"date": r.price_date, "price": r.price, "source": r.source_name or ""}
+                for r in records
+            ]
+            valid = [r.price for r in records if r.price is not None]
+            latest = next((r for r in reversed(records) if r.price is not None), None)
+            inversion = _detect_inversion(
+                prod.current_cost, latest.price if latest else None
+            )
+            products_out.append({
+                "id": prod.id,
+                "name": prod.name,
+                "brand": prod.brand or "",
+                "aliases": [a.alias for a in aliases],
+                "cost_info": {
+                    "current_cost": prod.current_cost,
+                    "cost_effective_from": prod.cost_effective_from,
+                    "cost_source": "manual" if prod.current_cost is not None else "unknown",
+                    "inverted_amount": inversion.get("inverted_amount"),
+                    "inverted_pct": inversion.get("inverted_pct"),
+                    "level": inversion.get("level"),
+                },
+                "price_history": history,
+                "statistics": {
+                    "points": len(valid),
+                    "first_date": records[0].price_date if records else None,
+                    "last_date": latest.price_date if latest else None,
+                    "latest_price": latest.price if latest else None,
+                    "min_price": min(valid) if valid else None,
+                    "max_price": max(valid) if valid else None,
+                    "avg_price": round(sum(valid) / len(valid), 2) if valid else None,
+                },
+            })
+    return {
+        "exported_at": now_bj().strftime("%Y-%m-%d %H:%M:%S"),
+        "product_count": len(products_out),
+        "products": products_out,
+    }
+
 
 # ── Frontend static files ────────────────────────────────────
 
