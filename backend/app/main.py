@@ -535,11 +535,19 @@ async def paste_deepseek_compare(data: dict = {}):
                 if rec:
                     last_prices[n] = rec.price
 
+    # API Key 从环境变量读，绝不硬编码（仓库是公开的）
+    api_key = os.environ.get("DEEPSEEK_API_KEY", "").strip()
+    if not api_key:
+        return JSONResponse(status_code=503, content={
+            "error": "未配置 DEEPSEEK_API_KEY 环境变量，AI 比对功能不可用。"
+                     "在部署环境的 environment 里设置该变量后重启容器。"
+        })
+
     try:
         resp = requests.post(
             "https://api.deepseek.com/chat/completions",
             headers={"Content-Type": "application/json",
-                     "Authorization": "Bearer REDACTED"},
+                     "Authorization": f"Bearer {api_key}"},
             json={"model": "deepseek-chat",
                   "messages": [{"role": "user", "content": prompt}],
                   "max_tokens": 16384, "temperature": 0.05},

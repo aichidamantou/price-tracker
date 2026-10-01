@@ -302,13 +302,14 @@ DeepSeek AI 比对（可选）：发送原始文本 + 全部首选别名 → 并
 > ⚠️ **本项目数据卷挂在部署目录内**（`./data:/data`）。
 > 任何形式的 `rm -rf ./*` 或 `find . -delete` 都会**连数据库一起删掉**。
 
-> 凭据不入库。先在本地 shell 里设好环境变量（`SSHPASS` 供 sshpass 用，`NAS_PW` 供群晖 sudo 用）：
+> **凭据一律不入库。** 部署前先在本地 shell 里设好环境变量：
 > ```bash
-> export NAS_HOST=<群晖地址>      # 例 NAS_HOST
-> export NAS_USER=<群晖账号>
+> export NAS_HOST='<群晖地址>'
+> export NAS_USER='<群晖账号>'
 > export SSHPASS='<该账号密码>'    # sshpass -e 从这里读
 > export NAS_PW="$SSHPASS"        # 群晖 sudo 密码（通常同 ssh 密码）
 > ```
+> 建议把这几行放进 `~/.zshrc` 或一个 gitignore 掉的 `deploy.env`，不要写进仓库。
 
 ```bash
 # ── 0. 本地打包（只带运行期文件，确认不含 data/）
@@ -359,7 +360,7 @@ cd /volume1/docker && sudo tar xzf price-tracker-predeploy-<TS>.tar.gz
 cd price-tracker && sudo /usr/local/bin/docker compose up -d --build
 ```
 
-**访问**：http://NAS_HOST:8889
+**访问**：`http://$NAS_HOST:8889`
 
 ### Mac 本地测试
 
