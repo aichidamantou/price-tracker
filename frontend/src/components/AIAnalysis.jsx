@@ -6,7 +6,7 @@ import {
 import {
   ExportOutlined, ImportOutlined, DeleteOutlined, CopyOutlined, DownloadOutlined,
   RobotOutlined, ReloadOutlined, ThunderboltOutlined, WarningOutlined, BulbOutlined,
-  RiseOutlined, FallOutlined, LineChartOutlined, HistoryOutlined,
+  RiseOutlined, FallOutlined, LineChartOutlined, HistoryOutlined, AppstoreOutlined,
 } from '@ant-design/icons'
 import ReactEChartsCore from 'echarts-for-react/lib/core'
 import * as echarts from 'echarts/core'
@@ -371,6 +371,15 @@ export default function AIAnalysis() {
   const kInverted = kpi.inverted_count ?? ov.inverted_count
   const kRiskLevel = kpi.risk_level || ov.risk_level
   const kHealth = kpi.health_index
+
+  // AI 只提供文字；数字一律来自本地引擎
+  const aiText = charts?.ai_text || {}
+  const summaryText = aiText.summary || analysis?.summary || ''
+  const marketCtx = (aiText.market_context && Object.keys(aiText.market_context).length)
+    ? aiText.market_context : (analysis?.market_context || {})
+  const recs = (aiText.recommendations?.length ? aiText.recommendations : analysis?.recommendations) || []
+  const catInsights = aiText.category_insights || []
+  const catStats = charts?.category_stats || {}
   const riskCount = kpi.high_risk != null
     ? (kpi.high_risk + kpi.medium_risk)
     : ((risk.high_risk?.length || 0) + (risk.medium_risk?.length || 0))
@@ -504,6 +513,66 @@ export default function AIAnalysis() {
             />
           </div>
 
+          {/* ── 品类表现（本地计算）── */}
+          {Object.keys(catStats).length > 0 && (
+            <div style={{
+              background: T.card, border: `1px solid ${T.borderSoft}`, borderRadius: 8,
+              padding: '10px 14px', marginBottom: 10,
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                <AppstoreOutlined style={{ color: T.primary }} />
+                <Text strong style={{ fontSize: 12.5 }}>品类表现</Text>
+                <span style={{ marginLeft: 'auto', fontSize: 11, color: T.textDim }}>
+                  相对大盘 = 该品类涨跌幅 − 大盘涨跌幅
+                </span>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: 8 }}>
+                {['细支', '中支', '常规'].map(cat => {
+                  const cs = catStats[cat]
+                  if (!cs) return null
+                  const rel = cs.relative_to_market
+                  const insight = catInsights.find(x => x.category === cat)
+                  return (
+                    <div key={cat} style={{
+                      background: T.subtle, border: `1px solid ${T.borderFaint}`,
+                      borderRadius: 6, padding: '8px 10px',
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+                        <Text strong style={{ fontSize: 13 }}>{cat}</Text>
+                        <span style={{ fontSize: 11, color: T.textDim }}>{cs.product_count} 个</span>
+                        {rel != null && (
+                          <span style={{
+                            marginLeft: 'auto', fontSize: 11.5, fontWeight: 600,
+                            color: pctColor(rel),
+                          }}>
+                            相对大盘 {pctText(rel)}
+                          </span>
+                        )}
+                      </div>
+                      <div style={{ display: 'flex', gap: 14, marginTop: 6, fontSize: 11.5 }}>
+                        <span style={{ color: pctColor(cs.avg_change_pct) }}>
+                          均跌 {cs.avg_change_pct != null ? pctText(cs.avg_change_pct) : '—'}
+                        </span>
+                        <span style={{ color: T.textSub }}>
+                          倒挂 <b style={{ color: T.down }}>{cs.inverted_count}</b>
+                          （{(cs.inverted_rate * 100).toFixed(1)}%）
+                        </span>
+                        <span style={{ color: T.textSub }}>
+                          高风险 <b style={{ color: cs.high_risk_count > 0 ? T.up : T.textDim }}>{cs.high_risk_count}</b>
+                        </span>
+                      </div>
+                      {insight?.comment && (
+                        <div style={{ marginTop: 6, fontSize: 11, color: T.textSub, lineHeight: 1.7 }}>
+                          {insight.comment}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+
           {/* ── 倒挂预警战情列表 ── */}
           {invertedTop.length > 0 && (
             <div style={{
@@ -579,27 +648,27 @@ export default function AIAnalysis() {
             }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
                 <BulbOutlined style={{ color: T.flat }} />
-                <Text strong style={{ fontSize: 12.5 }}>AI 分析摘要</Text>
+                <Text strong style={{ fontSize: 12.5 }}>AI 解读</Text>
                 <Tag style={{ marginLeft: 'auto', fontSize: 10 }}>
                   {detail?.import_time?.slice(0, 16)} 导入
                 </Tag>
               </div>
               <Paragraph style={{ fontSize: 12.5, lineHeight: 1.9, marginBottom: 0, color: T.text }}>
-                {analysis?.summary || '（本条记录没有 summary）'}
+                {summaryText || '（本条记录没有 summary）'}
               </Paragraph>
 
-              {(analysis?.market_context && Object.values(analysis.market_context).some(Boolean)) && (
+              {(marketCtx && Object.values(marketCtx).some(Boolean)) && (
                 <>
                   <Divider style={{ margin: '10px 0 8px' }} />
                   <div style={{ fontSize: 11.5, color: T.textSub, lineHeight: 2 }}>
-                    {analysis.market_context.industry_trend && (
-                      <div>· <b>行业趋势</b>：{analysis.market_context.industry_trend}</div>
+                    {marketCtx.industry_trend && (
+                      <div>· <b>行业趋势</b>：{marketCtx.industry_trend}</div>
                     )}
-                    {analysis.market_context.policy_impact && (
-                      <div>· <b>政策影响</b>：{analysis.market_context.policy_impact}</div>
+                    {marketCtx.policy_impact && (
+                      <div>· <b>政策影响</b>：{marketCtx.policy_impact}</div>
                     )}
-                    {analysis.market_context.consumer_shift && (
-                      <div>· <b>消费变化</b>：{analysis.market_context.consumer_shift}</div>
+                    {marketCtx.consumer_shift && (
+                      <div>· <b>消费变化</b>：{marketCtx.consumer_shift}</div>
                     )}
                   </div>
                 </>
@@ -613,15 +682,16 @@ export default function AIAnalysis() {
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
                 <ThunderboltOutlined style={{ color: T.primary }} />
                 <Text strong style={{ fontSize: 12.5 }}>关键建议</Text>
+                <Tag color="cyan" style={{ fontSize: 9.5, margin: 0 }}>AI 生成</Tag>
                 <span style={{ marginLeft: 'auto', fontSize: 11, color: T.textDim }}>
-                  {(analysis?.recommendations || []).length} 条
+                  {recs.length} 条
                 </span>
               </div>
-              {!(analysis?.recommendations || []).length && (
+              {!recs.length && (
                 <div style={{ fontSize: 12, color: T.textDim }}>（本条记录没有 recommendations）</div>
               )}
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 300, overflowY: 'auto' }}>
-                {(analysis?.recommendations || []).map((r, i) => (
+                {recs.map((r, i) => (
                   <div key={i} style={{
                     border: `1px solid ${T.borderSoft}`, borderRadius: 6, padding: '7px 10px',
                     borderLeft: `3px solid ${r.priority === 'high' ? UP : r.priority === 'medium' ? T.flat : T.down}`,
@@ -659,15 +729,15 @@ export default function AIAnalysis() {
           <Button key="c" onClick={() => setExportOpen(false)}>关闭</Button>,
           <Button key="p" onClick={async () => {
             const d = exportPreview || await runExport()
-            if (d) copyText(d.prompt + '\n\n## 待分析数据\n' + JSON.stringify(d, null, 2), '已复制「提示词 + 数据」，直接粘给 AI 即可')
+            if (d) copyText(d.prompt + '\n\n## 数据（已由本地引擎计算完成）\n' + JSON.stringify(d.ai_payload, null, 2), '已复制「提示词 + 数据」，直接粘给 AI 即可')
           }} loading={exporting}>复制（提示词 + 数据）</Button>,
           <Button key="j" onClick={async () => {
             const d = exportPreview || await runExport()
-            if (d) { copyText(JSON.stringify(d, null, 2), '已复制 JSON'); }
+            if (d) { copyText(JSON.stringify(d.ai_payload, null, 2), '已复制 JSON'); }
           }}>复制 JSON</Button>,
           <Button key="d" type="primary" icon={<DownloadOutlined />} onClick={async () => {
             const d = exportPreview || await runExport()
-            if (d) downloadJson(d)
+            if (d) downloadJson({ ...d.ai_payload, _prompt: d.prompt })
           }}>下载 JSON</Button>,
         ]}
       >
@@ -707,8 +777,13 @@ export default function AIAnalysis() {
               background: 'rgba(82,196,26,0.10)', border: '1px solid rgba(82,196,26,0.35)', borderRadius: 6,
               padding: '8px 10px', fontSize: 12, color: T.down,
             }}>
-              ✓ 已生成：{exportPreview.product_count} 个商品 / {exportPreview.total_records} 条价格记录
-              ，其中倒挂 {exportPreview.inverted_summary?.count ?? 0} 个
+              ✓ 本地引擎已算完：{exportPreview.product_count} 个商品 / {exportPreview.total_records} 条记录
+              ，倒挂 {exportPreview.summary?.inverted_count ?? 0} 个
+              ，均价 {exportPreview.summary?.avg_change_pct ?? 0}%
+              ，健康指数 {exportPreview.summary?.health_index ?? '—'}
+              <div style={{ fontSize: 11, color: T.textSub, marginTop: 3 }}>
+                AI 只负责解释，不参与任何数值计算
+              </div>
             </div>
           )}
         </div>
@@ -754,15 +829,17 @@ export default function AIAnalysis() {
         width={640}
       >
         <div style={{ fontSize: 12.5, lineHeight: 2, color: T.text }}>
-          <div><b>1. 导出数据</b></div>
+          <div><b>1. 导出数据（本地引擎先算）</b></div>
           <div style={{ color: T.textSub }}>
-            点「导出数据」→ 选时间范围和商品范围 → 点「复制（提示词 + 数据）」。
-            这份内容里已经内置了分析要求、烟草行业背景和严格的 JSON 输出格式。
+            点「导出数据」→ 选范围 → 点「复制（提示词 + 数据）」。
+            所有数值（涨跌幅、倒挂、风险分、预测）都由<b>本地引擎</b>算好并随内容一起给出，
+            AI 拿到的是结论而不是原始记录。
           </div>
           <Divider style={{ margin: '10px 0' }} />
           <div><b>2. 投喂给 AI</b></div>
           <div style={{ color: T.textSub }}>
-            粘贴给 DeepSeek / ChatGPT / 豆包等任意大模型，直接发送即可，无需再补充说明。
+            粘贴给任意大模型直接发送。提示词已明确<b>禁止 AI 重算任何数值</b>，
+            AI 只输出市场背景解释、风险原因归纳、建议和总结。
           </div>
           <Divider style={{ margin: '10px 0' }} />
           <div><b>3. 粘贴导入</b></div>

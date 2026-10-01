@@ -127,6 +127,7 @@ class AiAnalysis(Base):
     source = Column(String(20), default="manual_paste")  # manual_paste | deepseek_auto
     title = Column(String(120))     # 可选备注标题
     fingerprint = Column(String(64))  # 导入幂等判重（date_range + summary 的 md5）
+    local_data = Column(Text)         # 本地分析引擎产出的完整结果快照（图表直接读它，不重算）
     # 以下三列由 SQLite 生成列自动维护，ORM 只读不写（Computed 会被排除在 INSERT 外）
     risk_level = Column(Text, Computed(
         "json_extract(analysis_data, '$.overview.risk_level')", persisted=False))
@@ -201,6 +202,7 @@ def _ensure_ai_schema(c, conn, tag: str):
         source TEXT DEFAULT 'manual_paste',
         title TEXT,
         fingerprint TEXT,
+        local_data TEXT,
         risk_level TEXT GENERATED ALWAYS AS
             (json_extract(analysis_data, '$.overview.risk_level')) VIRTUAL,
         inverted_count INTEGER GENERATED ALWAYS AS
@@ -215,6 +217,7 @@ def _ensure_ai_schema(c, conn, tag: str):
     cols = [r[1] for r in c.fetchall()]
     for name, ddl in (
         ("fingerprint", "ALTER TABLE ai_analysis ADD COLUMN fingerprint TEXT"),
+        ("local_data", "ALTER TABLE ai_analysis ADD COLUMN local_data TEXT"),
         ("risk_level",
          "ALTER TABLE ai_analysis ADD COLUMN risk_level TEXT GENERATED ALWAYS AS "
          "(json_extract(analysis_data, '$.overview.risk_level')) VIRTUAL"),
